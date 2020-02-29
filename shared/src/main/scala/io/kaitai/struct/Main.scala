@@ -75,6 +75,8 @@ object Main {
     val config = updateConfig(conf, spec)
 
     val cc = lang match {
+      case AwkwardClassCompiler => 
+        new AwkwardClassCompiler(specs, spec)
       case GraphvizClassCompiler =>
         new GraphvizClassCompiler(specs, spec)
       case GoCompiler =>
