@@ -73,8 +73,8 @@ class AwkwardCompiler(
     importListHdr.addSystem("stdint.h")
 
     importListHdr.addKaitai("awkward/Slice.h")
-    importListHdr.addKaitai("awkward/fillable/FillableArray.h")
-    importListHdr.addKaitai("awkward/fillable/FillableOptions.h")
+    importListHdr.addKaitai("awkward/builder/ArrayBuilder.h")
+    importListHdr.addKaitai("awkward/builder/ArrayBuilderOptions.h")
 
     outHdr.puts(s"namespace ak = awkward;")
     
@@ -212,7 +212,7 @@ class AwkwardCompiler(
       s"$tIo $pIo, " +
       s"$tParent $pParent, " +
       s"$tRoot $pRoot$endianSuffixSrc) " +
-      s": $kstructName($pIo), m_entry(ak::FillableOptions(1024, 2.0)) {" 
+      s": $kstructName($pIo), m_entry(ak::ArrayBuilderOptions(1024, 2.0)) {" 
     )
     outSrc.inc
 
@@ -573,11 +573,12 @@ class AwkwardCompiler(
     outSrc.puts(s"animal_entry_t this_one = animal_entry_t(m__io, this, m__root);")
     outSrc.puts(s"${privateMemberName(id)}.beginrecord();")
     outSrc.puts(s"${privateMemberName(id)}.field_check"+"(\"Name\");")
-    outSrc.puts(s"${privateMemberName(id)}.string(this_one.species());")
-    outSrc.puts(s"${privateMemberName(id)}.field_check("+"\"Age\");")
+    outSrc.puts(s"${privateMemberName(id)}.string(this_one.name());")
+    /*outSrc.puts(s"${privateMemberName(id)}.field_check("+"\"Age\");")
     outSrc.puts(s"${privateMemberName(id)}.integer(this_one.age());")
     outSrc.puts(s"${privateMemberName(id)}.field_check("+"\"Weight\");")
     outSrc.puts(s"${privateMemberName(id)}.integer(this_one.weight());")
+    */
     outSrc.puts(s"${privateMemberName(id)}.endrecord();")
   }
 
@@ -1054,10 +1055,10 @@ object AwkwardCompiler extends LanguageCompilerStatic
         })
 
       case ArrayTypeInStream(inType) => config.pointers match {
-        case RawPointers => s"ak::FillableArray"
+        case RawPointers => s"ak::ArrayBuilder"
         case UniqueAndRawPointers => s"std::unique_ptr<std::vector<${kaitaiType2NativeType(config, inType, absolute)}>>"
       }
-      case CalcArrayType(inType) => s"ak::FillableArray"
+      case CalcArrayType(inType) => s"ak::ArrayBuilder"
       case KaitaiStreamType => s"$kstreamName*"
       case KaitaiStructType => config.pointers match {
         case RawPointers => s"$kstructName*"
