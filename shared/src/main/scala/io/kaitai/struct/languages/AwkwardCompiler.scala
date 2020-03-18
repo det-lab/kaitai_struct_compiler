@@ -564,16 +564,20 @@ class AwkwardCompiler(
     outSrc.puts("}")
   }
   
-  override def condRepeatEosHeader(id: Identifier, io: String, dataType: DataType, needRaw: Boolean): Unit = {
+  override def condRepeatEosHeader(curClass: ClassSpec, id: Identifier, io: String, dataType: DataType, needRaw: Boolean): Unit = {
     importListHdr.addSystem("vector")
 
     outSrc.puts("int i = 0;")
     outSrc.puts("while (!m__io->is_eof()) {")
     outSrc.inc
-    outSrc.puts(s"animal_entry_t this_one = animal_entry_t(m__io, this, m__root);")
-    outSrc.puts(s"${privateMemberName(id)}.beginrecord();")
-    outSrc.puts(s"${privateMemberName(id)}.field_check"+"(\"Name\");")
-    outSrc.puts(s"${privateMemberName(id)}.string(this_one.name());")
+    
+    outSrc.puts(s"
+
+    //outSrc.puts(s"animal_entry_t this_one = animal_entry_t(m__io, this, m__root);")
+    //outSrc.puts(s"${privateMemberName(id)}.beginrecord();")
+    //outSrc.puts(s"${privateMemberName(id)}.field_check"+"(\"Name\");")
+    //outSrc.puts(s"${privateMemberName(id)}.string(this_one.name());")
+    
     /*outSrc.puts(s"${privateMemberName(id)}.field_check("+"\"Age\");")
     outSrc.puts(s"${privateMemberName(id)}.integer(this_one.age());")
     outSrc.puts(s"${privateMemberName(id)}.field_check("+"\"Weight\");")
