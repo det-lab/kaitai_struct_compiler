@@ -1,19 +1,33 @@
+// From languages/CppCompiler.scala
+//package io.kaitai.struct.languages
 package io.kaitai.struct
 
-import io.kaitai.struct.datatype.DataType
+import io.kaitai.struct.CppRuntimeConfig._
+import io.kaitai.struct._
 import io.kaitai.struct.datatype.DataType._
+import io.kaitai.struct.datatype._
 import io.kaitai.struct.exprlang.Ast
+import io.kaitai.struct.exprlang.Ast.expr
 import io.kaitai.struct.format._
+import io.kaitai.struct.languages.components._
+import io.kaitai.struct.translators.{CppTranslator, TypeDetector}
+
+// From GraphvizClassCompiler.scala
+import io.kaitai.struct.datatype.DataType
+//import io.kaitai.struct.datatype.DataType._
+//import io.kaitai.struct.exprlang.Ast
+//import io.kaitai.struct.format._
 import io.kaitai.struct.languages.components.{LanguageCompiler, LanguageCompilerStatic}
 import io.kaitai.struct.precompile.CalculateSeqSizes
 import io.kaitai.struct.translators.RubyTranslator
-
 import scala.collection.mutable.ListBuffer
+
 
 class AwkwardClassCompiler(classSpecs: ClassSpecs, topClass: ClassSpec) extends AbstractCompiler {
   import AwkwardClassCompiler._
 
-  val out = new StringLanguageOutputWriter(indent)
+  val outSrc = new StringLanguageOutputWriter(indent)
+  val outHdr = new StringLanguageOutputWriter(indent)
 
   val provider = new ClassTypeProvider(classSpecs, topClass)
   val translator = new RubyTranslator(provider)
@@ -24,39 +38,54 @@ class AwkwardClassCompiler(classSpecs: ClassSpecs, topClass: ClassSpec) extends 
   def nowClassName = provider.nowClass.name
   var currentTable: String = ""
 
+  def outFileNameSource(topClassName: String): String = s"$topClassName.cpp"
+  def outFileNameHeader(topClassName: String): String = s"$topClassName.h"
+  
   override def compile: CompileLog.SpecSuccess = {
-    out.puts("digraph {")
-    out.inc
-    out.puts("rankdir=LR;")
-    out.puts("node [shape=plaintext];")
+    
+    // Header file
+    outHdr.puts("#include \"kaitai/kaitaistruct.h\"")
+    outHdr.puts("#include \"awkward/builder/ArrayBuilderOptions.h\"")
+    outHdr.puts
+    outHdr.puts("namespace ak = awkward;")
+    outHdr.puts
+    outHdr.puts("ak::ArrayBuilder _read(kaitai::kstream* ks);")
+
+    // Source file Pre-Processor directives
+    outSrc.puts("#include \"kaitai/kaitaistruct.h\"")
+    outSrc.puts("#include <stdint.h>")
+    outSrc.puts("#include \"awkward/Slice.h\"")
+    outSrc.puts("#include \"awkward/builder/ArrayBuilder.h\"")
+    outSrc.puts("#include \"awkward/builder/ArrayBuilderOptions.h\"")
+    outSrc.puts
+    outSrc.puts("namespace ak = awkward;")
+    outSrc.puts
 
     compileClass(topClass)
 
-    links.foreach { case (t1, t2, style) =>
-        out.puts(s"$t1 -> $t2 [$style];")
-    }
-
-    out.dec
-    out.puts("}")
+    outSrc.dec
+    outSrc.puts("}")
 
     CompileLog.SpecSuccess(
-      "",
-      List(CompileLog.FileSuccess(
-        outFileName(topClass.nameAsStr),
-        out.result
-      ))
-    )
+      "",//type2class(topClassName.head),
+      results(topClass).map { case (fileName, contents) => CompileLog.FileSuccess(fileName, contents) }.toList
+      )
+
   }
+
+  def results(topClass: ClassSpec): Map[String, String] = { 
+    val className = topClass.nameAsStr
+    Map(
+      outFileNameSource(className) -> (outSrc.result),
+      outFileNameHeader(className) -> (outHdr.result)
+    )
+    }
 
   def compileClass(curClass: ClassSpec): Unit = {
     provider.nowClass = curClass
     val className = curClass.name
-
-    out.puts(s"subgraph cluster__${type2class(className)} {")
-    out.inc
-    out.puts("label=\"" + type2display(className) + "\";")
-    out.puts("graph[style=dotted];")
-    out.puts
+    // ${type2class(className)} here returns "animal"
+    // type2display(the above) returns "Animal"
 
     // Sequence
     compileSeq(className, curClass)
@@ -68,25 +97,28 @@ class AwkwardClassCompiler(classSpecs: ClassSpecs, topClass: ClassSpec) extends 
           compileParseInstance(className, instName, pis)
           tableEnd
         case vis: ValueInstanceSpec =>
-          out.puts(s"bingo bango")
+          outSrc.puts(s"bingo bango")
           tableValueInstance(className, instName.name, vis)
       }
     }
 
 //    curClass.enums.foreach { case(enumName, enumColl) => compileEnum(enumName, enumColl) }
 
-    out.add(extraClusterLines)
+    outSrc.add(extraClusterLines)
     extraClusterLines.clear()
 
     // Recursive types
     curClass.types.foreach { case (typeName, intClass) => compileClass(intClass) }
 
-    out.dec
-    out.puts("}")
+    outSrc.dec
+    outSrc.puts("}")
   }
 
   def compileSeq(className: List[String], curClass: ClassSpec): Unit = {
     tableStart(className, "seq")
+    
+    outSrc.puts(s"animalbeginrecord();")
+    outSrc.puts
 
     CalculateSeqSizes.forEachSeqAttr(curClass, (attr, seqPos, _, _) => {
       attr.id match {
@@ -120,14 +152,13 @@ class AwkwardClassCompiler(classSpecs: ClassSpecs, topClass: ClassSpec) extends 
 
   def tableStart(className: List[String], extra: String): Unit = {
     currentTable = s"${type2class(className)}__$extra"
-    out.puts(s"$currentTable" + " [label=<<TABLE BORDER=\"0\" CELLBORDER=\"1\" CELLSPACING=\"0\">")
-    out.inc
-    out.puts(s"<TR>${TH_START}pos</TD>${TH_START}size</TD>${TH_START}type</TD>${TH_START}id</TD></TR>")
+    outSrc.puts(s"// current table: $currentTable")
+    outSrc.inc
   }
 
   def tableEnd: Unit = {
-    out.dec
-    out.puts("</TABLE>>];")
+    outSrc.dec
+    outSrc.puts("animal.endrecord();")
   }
 
   val STYLE_EDGE_TYPE = "style=bold"
@@ -137,6 +168,7 @@ class AwkwardClassCompiler(classSpecs: ClassSpecs, topClass: ClassSpec) extends 
   val STYLE_EDGE_REPEAT = STYLE_EDGE_MISC
   val STYLE_EDGE_VALUE = STYLE_EDGE_MISC
 
+  // "constructRead"
   def tableRow(curClass: List[String], pos: Option[String], attr: AttrLikeSpec, name: String): Unit = {
     val dataType = attr.dataType
     val sizeStr = dataTypeSizeAsString(dataType, name)
@@ -149,12 +181,12 @@ class AwkwardClassCompiler(classSpecs: ClassSpecs, topClass: ClassSpec) extends 
         dataTypeName(dataType)
     }
 
-    out.puts("<TR>" +
-      "<TD PORT=\"" + name + "_pos\">" + pos.getOrElse("...") + "</TD>" +
-      "<TD PORT=\"" + name + "_size\">" + sizeStr + "</TD>" +
-      s"<TD>$dataTypeStr</TD>" +
-      "<TD PORT=\"" + name + "_type\">" + name + "</TD>" +
-      "</TR>")
+    outSrc.puts(s"${kaitaiType2NativeType(dataType)} data = m__io.read_$dataTypeStr();")
+    outSrc.puts(s"animal.field_check("+name+");")
+    outSrc.puts(s"animal.string(data);")
+    outSrc.puts(s"pos.getOrElse = "+pos.getOrElse("..."))
+    outSrc.puts(s"sizeStr = " + sizeStr)
+    outSrc.puts(s"dataTypeStr = $dataTypeStr")
 
     // Add user type links
     dataType match {
@@ -167,16 +199,16 @@ class AwkwardClassCompiler(classSpecs: ClassSpecs, topClass: ClassSpec) extends 
     val portName = name + "__repeat"
     attr.cond.repeat match {
       case RepeatExpr(ex) =>
-        out.puts("<TR><TD COLSPAN=\"4\" PORT=\"" + portName + "\">repeat " +
+        outSrc.puts("<TR><TD COLSPAN=\"4\" PORT=\"" + portName + "\">repeat " +
           expression(ex, s"$currentTable:$portName", STYLE_EDGE_REPEAT) +
           " times</TD></TR>")
       case RepeatUntil(ex) =>
         provider._currentIteratorType = Some(dataType)
-        out.puts("<TR><TD COLSPAN=\"4\" PORT=\"" + portName + "\">repeat until " +
+        outSrc.puts("<TR><TD COLSPAN=\"4\" PORT=\"" + portName + "\">repeat until " +
           expression(ex, s"$currentTable:$portName", STYLE_EDGE_REPEAT) +
           "</TD></TR>")
       case RepeatEos =>
-        out.puts("<TR><TD COLSPAN=\"4\" PORT=\"" + portName + "\">repeat to end of stream</TD></TR>")
+        outSrc.puts("<TR><TD COLSPAN=\"4\" PORT=\"" + portName + "\">repeat to end of stream</TD></TR>")
       case NoRepeat =>
       // no additional line
     }
@@ -185,11 +217,11 @@ class AwkwardClassCompiler(classSpecs: ClassSpecs, topClass: ClassSpec) extends 
   def tableValueInstance(curClass: List[String], name: String, inst: ValueInstanceSpec): Unit = {
     currentTable = s"${type2class(curClass)}__inst__$name"
 
-    out.puts(s"$currentTable" + " [label=<<TABLE BORDER=\"0\" CELLBORDER=\"1\" CELLSPACING=\"0\">")
-    out.inc
-    out.puts(s"<TR>${TH_START}id</TD>${TH_START}value</TD></TR>")
+    outSrc.puts(s"$currentTable" + " [label=<<TABLE BORDER=\"0\" CELLBORDER=\"1\" CELLSPACING=\"0\">")
+    outSrc.inc
+    outSrc.puts(s"<TR>${TH_START}id</TD>${TH_START}value</TD></TR>")
 
-    out.puts(
+    outSrc.puts(
       s"<TR><TD>$name</TD>" +
       "<TD>" +
       expression(inst.value, currentTable, STYLE_EDGE_VALUE) +
@@ -396,9 +428,10 @@ class AwkwardClassCompiler(classSpecs: ClassSpecs, topClass: ClassSpec) extends 
   }
 
   def indent: String = "\t"
-  def outFileName(topClassName: String): String = s"$topClassName.dot"
+
 }
 
+// extension of LanguageCompilerStatic
 object AwkwardClassCompiler extends LanguageCompilerStatic {
   // FIXME: Unused, should be probably separated from LanguageCompilerStatic
   override def getCompiler(
@@ -409,6 +442,93 @@ object AwkwardClassCompiler extends LanguageCompilerStatic {
   def type2class(name: List[String]) = name.last
   def type2display(name: List[String]) = name.map(Utils.upperCamelCase).mkString("::")
 
+  def kstructName = "kaitai::kstruct"
+  def kstreamName = "kaitai::kstream"
+
+  //def kaitaiType2NativeType(config: something = CppRuntimeConfig, attrType: DataType, absolute: Boolean = false): String = {
+  def kaitaiType2NativeType(attrType: DataType, absolute: Boolean = false): String = {
+    attrType match {
+      case Int1Type(false) => "uint8_t"
+      case IntMultiType(false, Width2, _) => "uint16_t"
+      case IntMultiType(false, Width4, _) => "uint32_t"
+      case IntMultiType(false, Width8, _) => "uint64_t"
+
+      case Int1Type(true) => "int8_t"
+      case IntMultiType(true, Width2, _) => "int16_t"
+      case IntMultiType(true, Width4, _) => "int32_t"
+      case IntMultiType(true, Width8, _) => "int64_t"
+
+      case FloatMultiType(Width4, _) => "float"
+      case FloatMultiType(Width8, _) => "double"
+
+      case BitsType(_) => "uint64_t"
+
+      case _: BooleanType => "bool"
+      case CalcIntType => "int32_t"
+      case CalcFloatType => "double"
+
+      case _: StrType => "std::string"
+      case _: BytesType => "std::string"
+
+      case t: UserType =>
+        val typeStr = types2class(if (absolute) {
+          t.classSpec.get.name
+        } else {
+          t.name
+        }) 
+        s"$typeStr*"
+        //config.pointers match {
+        //  case RawPointers => s"$typeStr*"
+        //  case SharedPointers => s"std::shared_ptr<$typeStr>"
+        //  case UniqueAndRawPointers =>
+        //    if (t.isOwning) s"std::unique_ptr<$typeStr>" else s"$typeStr*"
+        //}
+
+      case t: EnumType =>
+        types2class(if (absolute) {
+          t.enumSpec.get.name
+        } else {
+          t.name
+        })
+
+      case ArrayTypeInStream(inType) => s"std::vector<${kaitaiType2NativeType(inType, absolute)}>*"
+      case CalcArrayType(inType) => s"std::vector<${kaitaiType2NativeType(inType, absolute)}>*"
+      case KaitaiStreamType => s"$kstreamName*"
+      case KaitaiStructType => s"$kstructName*"
+      case CalcKaitaiStructType => s"$kstructName*"
+
+      case st: SwitchType =>
+        kaitaiType2NativeType(combineSwitchType(st), absolute)
+    }
+  }
+
+  def types2class(typeName: Ast.typeId) = {
+    typeName.names.map(type2class).mkString(
+      if (typeName.absolute) "::" else "",
+      "::",
+      ""
+    )
+  }
+
+  def types2class(components: List[String]) =
+    components.map(type2class).mkString("::")
+
+  def type2class(name: String) = name + "_t"
+
+  def combineSwitchType(st: SwitchType): DataType = {
+    val ct1 = TypeDetector.combineTypes(
+      st.cases.filterNot {
+        case (caseExpr, _: BytesType) => caseExpr == SwitchType.ELSE_CONST
+        case _ => false
+      }.values
+    )
+    if (st.isOwning) {
+      ct1
+    } else {
+      ct1.asNonOwning
+    }
+  }
+  
   def dataTypeName(dataType: DataType): String = {
     dataType match {
       case rt: ReadableType => rt.apiCall(None) // FIXME
@@ -441,7 +561,7 @@ object AwkwardClassCompiler extends LanguageCompilerStatic {
     s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("\"", "&quot;")
   }
 
-  /**
+  /*
     * Converts bit-level position into byte/bit human-readable combination.
     * @param seqPos optional number of bits
     * @return fractional human-readable string which displays "bytes:bits",
