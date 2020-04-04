@@ -76,7 +76,7 @@ object Main {
 
     val cc = lang match {
       case AwkwardClassCompiler => 
-        new AwkwardClassCompiler(specs, spec)
+        new AwkwardClassCompiler(specs, spec, config)
       case GraphvizClassCompiler =>
         new GraphvizClassCompiler(specs, spec)
       case GoCompiler =>
