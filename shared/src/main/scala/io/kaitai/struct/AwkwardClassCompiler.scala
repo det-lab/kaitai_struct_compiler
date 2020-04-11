@@ -14,18 +14,18 @@ import io.kaitai.struct.exprlang.Ast.expr
 import io.kaitai.struct.format._
 
 import io.kaitai.struct.languages.components._
-//import io.kaitai.struct.languages.components.{LanguageCompiler, LanguageCompilerStatic}
+//import io.kaitai.struct.languages.components.{LanguageCompiler, LanguageCompilerStatic, CppImportList}
 
 import io.kaitai.struct.precompile.CalculateSeqSizes
 
-//import io.kaitai.struct.translators._
 import io.kaitai.struct.translators.{CppTranslator, TypeDetector}
-//import io.kaitai.struct.translators.RubyTranslator
 
 import scala.collection.mutable.ListBuffer
 
 
-class AwkwardClassCompiler(classSpecs: ClassSpecs, topClass: ClassSpec, config: RuntimeConfig) extends AbstractCompiler {
+class AwkwardClassCompiler(classSpecs: ClassSpecs, topClass: ClassSpec, config: RuntimeConfig)
+  extends AbstractCompiler
+  with EveryReadIsExpression {
   import AwkwardClassCompiler._
 
   val importListSrc = new CppImportList
@@ -44,6 +44,8 @@ class AwkwardClassCompiler(classSpecs: ClassSpecs, topClass: ClassSpec, config: 
   def outFileNameSource(topClassName: String): String = s"$topClassName.cpp"
   def outFileNameHeader(topClassName: String): String = s"$topClassName.h"
   
+  val topClassName = topClass.nameAsStr // "animal"
+
   override def compile: CompileLog.SpecSuccess = {
     
     // Header file - Pre-Processor directives
@@ -81,11 +83,8 @@ class AwkwardClassCompiler(classSpecs: ClassSpecs, topClass: ClassSpec, config: 
     outSrc.puts
     outSrc.puts(s"while(!ks->is_eof()) {")
     outSrc.inc
-    outSrc.puts(s"${type2class(nowClassName)}s.beginrecord();")
 
     compileClass(topClass)
-
-    outSrc.puts(s"${type2class(nowClassName)}s.endrecord();")
 
     outSrc.dec
     outSrc.puts("}")
@@ -111,7 +110,8 @@ class AwkwardClassCompiler(classSpecs: ClassSpecs, topClass: ClassSpec, config: 
     val className = curClass.name
     // ${type2class(className)} here returns "animal"
     // type2display(the above) returns "Animal"
-
+    outSrc.puts(s"${topClassName}s.beginrecord();")
+    
     // Sequence
     compileSeq(className, curClass)
 
@@ -119,6 +119,8 @@ class AwkwardClassCompiler(classSpecs: ClassSpecs, topClass: ClassSpec, config: 
 
     // Recursive types
     curClass.types.foreach { case (typeName, intClass) => compileClass(intClass) }
+
+    outSrc.puts(s"${topClassName}s.endrecord();")
 
     outSrc.dec
     outSrc.puts("}")
@@ -128,9 +130,7 @@ class AwkwardClassCompiler(classSpecs: ClassSpecs, topClass: ClassSpec, config: 
 
   def compileSeq(className: List[String], curClass: ClassSpec): Unit = {
     //tableStart(className, "seq")
-    val currSeq: String = s"${type2class(className)}"
-    
-    
+    val currSeq: String = s"${type2class(className)}"  
 
     CalculateSeqSizes.forEachSeqAttr(curClass, (attr, seqPos, _, _) => {
       attr.id match {
@@ -151,36 +151,28 @@ class AwkwardClassCompiler(classSpecs: ClassSpecs, topClass: ClassSpec, config: 
       case _ =>
         dataTypeName(dataType)*/
     //}
-    val topClassName = topClass.nameAsStr
- 
+     
     // TODO
     dataType match {
       case ut: UserType =>
         outSrc.puts(s"// Read commands for sequence: ${type2class(ut.name)}")
         outSrc.puts
-      case number =>
-        outSrc.puts(s"// currently on "+name)
+      /*case Int1Type(false) | IntMultiType(_, _, _) | BitsType(_) =>
         outSrc.puts(s"${kaitaiType2NativeType(dataType)} ${name} = ks->read_${dataTypeStr}();")
         outSrc.puts(s"${topClassName}s.field_check($name);")
         outSrc.puts(s"${topClassName}s.integer($name)")
-        outSrc.puts
-      case string =>
-        outSrc.puts(s"// currently on "+name)
-        outSrc.puts(s"${kaitaiType2NativeType(dataType)} ${name} = ks->read_${dataTypeStr}();")
-        outSrc.puts(s"${topClassName}s.field_check($name);")
-        outSrc.puts(s"${topClassName}s.string($name)")
-        outSrc.puts
-    }
-
-     // Add user type links
-    dataType match {
-      case ut: UserType =>
-        outSrc.puts(s"// Read commands for sequence: ${type2class(ut.name)}")
+        outSrc.puts*/
+      case t: StrFromBytesType =>
+        val expr = translator.bytesToStr(parseExprBytes(t.bytes, io), Ast.expr.Str(t.encoding))
+        
+        outSrc.puts(s"${kaitaiType2NativeType(dataType)} ${name} = $expr")
+        outSrc.puts(s"${topClassName}s.field_check(" + "\"" + s"$name" + "\");")
+        outSrc.puts(s"${topClassName}s.string($name);")
         outSrc.puts
       case _ =>
-        outSrc.puts(s"// currently on "+name)
         outSrc.puts(s"${kaitaiType2NativeType(dataType)} ${name} = ks->read_${dataTypeStr}();")
-        outSrc.puts(s"${topClassName}s.field_check($name);")
+        outSrc.puts(s"${topClassName}s.field_check(" + "\"" + s"$name" + "\");")
+        outSrc.puts(s"${topClassName}s.integer($name);")
         outSrc.puts
     }
   }  
@@ -234,6 +226,43 @@ class AwkwardClassCompiler(classSpecs: ClassSpecs, topClass: ClassSpec, config: 
         }
     }
   }
+
+/* Group of handleAssignment functions*/
+  override def handleAssignmentRepeatEos(id: Identifier, expr: String): Unit = {
+    //outSrc.puts(s"${privateMemberName(id)}->push_back(${stdMoveWrap(expr)});")
+  }
+
+  override def handleAssignmentRepeatExpr(id: Identifier, expr: String): Unit = {
+    //outSrc.puts(s"${privateMemberName(id)}->push_back(${stdMoveWrap(expr)});")
+  }
+
+  override def handleAssignmentRepeatUntil(id: Identifier, expr: String, isRaw: Boolean): Unit = {
+    /*val (typeDecl, tempVar) = if (isRaw) {
+      ("std::string ", translator.doName(Identifier.ITERATOR2))
+    } else {
+      ("", translator.doName(Identifier.ITERATOR))
+    }
+    val (wrappedTempVar, rawPtrExpr) = if (config.cppConfig.pointers == UniqueAndRawPointers) {
+      expr match {
+        case ReStdUniquePtr(cppClass, innerExpr) =>
+          (s"std::move(std::unique_ptr<$cppClass>($tempVar))", innerExpr)
+        case _ =>
+          (tempVar, expr)
+      }
+    } else {
+      (tempVar, expr)
+    }
+
+    outSrc.puts(s"$typeDecl$tempVar = $rawPtrExpr;")
+
+    outSrc.puts(s"${privateMemberName(id)}->push_back($wrappedTempVar);")
+    */
+  }
+
+  override def handleAssignmentSimple(id: Identifier, expr: String): Unit = {
+    //outSrc.puts(s"${privateMemberName(id)} = $expr;")
+  }
+
 
   /*def compileSwitch(attrName: String, st: SwitchType): Unit = {
 
