@@ -1,6 +1,15 @@
-//package io.kaitai.struct.languages
 package io.kaitai.struct
 
+/*
+import io.kaitai.struct.CompileLog.FileSuccess
+import io.kaitai.struct.datatype.DataType._
+import io.kaitai.struct.datatype._
+import io.kaitai.struct.exprlang.Ast
+import io.kaitai.struct.format.{AttrSpec, _}
+import io.kaitai.struct.languages.components._
+//import io.kaitai.struct.languages.components.{ExtraAttrs, LanguageCompiler, LanguageCompilerStatic}
+import io.kaitai.struct.translators.{CppTranslator, TypeDetector}
+*/
 import io.kaitai.struct._
 
 import io.kaitai.struct.CppRuntimeConfig._
@@ -20,14 +29,16 @@ import io.kaitai.struct.precompile.CalculateSeqSizes
 
 import io.kaitai.struct.translators.{CppTranslator, TypeDetector}
 
+import io.kaitai.struct.precompile.CalculateSeqSizes
 import scala.collection.mutable.ListBuffer
 
-
-class AwkwardClassCompiler(classSpecs: ClassSpecs, topClass: ClassSpec, config: RuntimeConfig)
-  extends AbstractCompiler
-  with EveryReadIsExpression {
-  import AwkwardClassCompiler._
-
+class AwkwardClassCompiler(
+  classSpecs: ClassSpecs,
+  val topClass: ClassSpec,
+  config: RuntimeConfig,
+  langObj: LanguageCompilerStatic
+) extends AbstractCompiler {
+ 
   val importListSrc = new CppImportList
   val importListHdr = new CppImportList
 
