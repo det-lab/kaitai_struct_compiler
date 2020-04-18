@@ -354,6 +354,7 @@ object TypeDetector {
         case (_: IntType, _: IntType) => CalcIntType
         case (_: NumericType, _: NumericType) => CalcFloatType
         case (_: BytesType, _: BytesType) => CalcBytesType
+        case (_: BooleanType, _: BooleanType) => CalcBooleanType
         case (_: StrType, _: StrType) => CalcStrType
         case (t1: UserType, t2: UserType) =>
           // Two user types can differ in reserved size and/or processing, but that doesn't matter in case of
@@ -389,7 +390,10 @@ object TypeDetector {
               }
           }
         case (_: UserType, _: ComplexDataType) => CalcKaitaiStructType
+        case (t1: EnumType, t2: EnumType) =>
+          if (t1.enumSpec.get == t2.enumSpec.get) EnumType(t1.name, CalcIntType) else AnyType
         case (_: ComplexDataType, _: UserType) => CalcKaitaiStructType
+        case (a1: ArrayType, a2: ArrayType) => CalcArrayType(combineTypesAndFail(a1.elType, a2.elType))
         case _ => AnyType
       }
     }
@@ -442,6 +446,7 @@ object TypeDetector {
         case (_: StrType, _: StrType) => true
         case (_: UserType, KaitaiStructType) => true
         case (_: UserType, CalcKaitaiStructType) => true
+        case (KaitaiStructType, CalcKaitaiStructType) => true
         case (t1: UserType, t2: UserType) =>
           (t1.classSpec, t2.classSpec) match {
             case (None, None) =>
@@ -456,6 +461,7 @@ object TypeDetector {
         case (t1: EnumType, t2: EnumType) =>
           // enums are assignable if their enumSpecs match
           t1.enumSpec.get == t2.enumSpec.get
+        case (a1: ArrayType, a2: ArrayType) => canAssign(a1.elType, a2.elType)
         case (_, _) => false
       }
     }

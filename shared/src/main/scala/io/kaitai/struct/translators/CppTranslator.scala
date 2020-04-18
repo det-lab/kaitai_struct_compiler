@@ -106,8 +106,15 @@ class CppTranslator(provider: TypeProvider, importListSrc: CppImportList, import
   override def doArrayLiteral(t: DataType, values: Seq[expr]): String = {
     if (config.cppConfig.useListInitializers) {
       importListHdr.addSystem("vector")
-      s"std::vector<${CppCompiler.kaitaiType2NativeType(config.cppConfig, t)}>" +
-        "{" + values.map((value) => translate(value)).mkString(", ") + "}"
+      val cppElType = CppCompiler.kaitaiType2NativeType(config.cppConfig, t)
+      val rawInit = s"new std::vector<$cppElType>{" + values.map((value) => translate(value)).mkString(", ") + "}"
+      config.cppConfig.pointers match {
+        case RawPointers =>
+          rawInit
+        case UniqueAndRawPointers =>
+          s"std::unique_ptr<std::vector<$cppElType>>($rawInit)"
+        // TODO: C++14
+      }
     } else {
       throw new RuntimeException("C++ literal arrays are not implemented yet")
     }
@@ -137,7 +144,7 @@ class CppTranslator(provider: TypeProvider, importListSrc: CppImportList, import
 
   override def doEnumByLabel(enumType: List[String], label: String): String =
     CppCompiler.types2class(enumType.dropRight(1)) + "::" +
-      (enumType.last + "_" + label).toUpperCase
+      Utils.upperUnderscoreCase(enumType.last + "_" + label)
   override def doEnumById(enumType: List[String], id: String): String =
     s"static_cast<${CppCompiler.types2class(enumType)}>($id)"
 

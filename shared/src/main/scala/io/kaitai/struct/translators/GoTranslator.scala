@@ -3,7 +3,7 @@ package io.kaitai.struct.translators
 import io.kaitai.struct.datatype.DataType
 import io.kaitai.struct.datatype.DataType._
 import io.kaitai.struct.exprlang.Ast
-import io.kaitai.struct.format.Identifier
+import io.kaitai.struct.format.{ClassSpec, Identifier}
 import io.kaitai.struct.languages.GoCompiler
 import io.kaitai.struct.precompile.TypeMismatchError
 import io.kaitai.struct.{ImportList, StringLanguageOutputWriter, Utils}
@@ -49,7 +49,11 @@ class GoTranslator(out: StringLanguageOutputWriter, provider: TypeProvider, impo
         val enumSpec = provider.resolveEnum(inType, enumType.name)
         trEnumByLabel(enumSpec.name, label.name)
       case Ast.expr.Name(name: Ast.identifier) =>
-        trLocalName(name.name)
+        if (name.name == Identifier.SIZEOF) {
+          byteSizeOfClassSpec(provider.nowClass)
+        } else {
+          trLocalName(name.name)
+        }
       case Ast.expr.UnaryOp(op, operand) =>
         ResultString(unaryOp(op) + (operand match {
           case Ast.expr.IntNum(_) | Ast.expr.FloatNum(_) =>
@@ -95,6 +99,10 @@ class GoTranslator(out: StringLanguageOutputWriter, provider: TypeProvider, impo
         doGuessArrayLiteral(elts)
       case ctt: Ast.expr.CastToType =>
         doCastOrArray(ctt)
+      case Ast.expr.ByteSizeOfType(typeName) =>
+        doByteSizeOfType(typeName)
+      case Ast.expr.BitSizeOfType(typeName) =>
+        doBitSizeOfType(typeName)
     }
   }
 
@@ -102,6 +110,21 @@ class GoTranslator(out: StringLanguageOutputWriter, provider: TypeProvider, impo
   def trFloatLiteral(n: BigDecimal): TranslatorResult = ResultString(doFloatLiteral(n))
   def trStringLiteral(s: String): TranslatorResult = ResultString(doStringLiteral(s))
   def trBoolLiteral(n: Boolean): TranslatorResult = ResultString(doBoolLiteral(n))
+
+  def doByteSizeOfType(typeName: Ast.typeId): TranslatorResult = trIntLiteral(
+    CommonSizeOf.bitToByteSize(
+      CommonSizeOf.getBitsSizeOfType(
+        typeName.nameAsStr, detectCastType(typeName)
+      )
+    )
+  )
+  def doBitSizeOfType(typeName: Ast.typeId): TranslatorResult = trIntLiteral(
+    CommonSizeOf.getBitsSizeOfType(
+      typeName.nameAsStr, detectCastType(typeName)
+    )
+  )
+  def byteSizeOfClassSpec(cs: ClassSpec): TranslatorResult =
+    trIntLiteral(CommonSizeOf.getByteSizeOfClassSpec(cs))
 
   def trBooleanOp(op: Ast.boolop, values: Seq[Ast.expr]) =
     ResultString(doBooleanOp(op, values))
@@ -176,6 +199,7 @@ class GoTranslator(out: StringLanguageOutputWriter, provider: TypeProvider, impo
       case Identifier.ITERATOR |
            Identifier.ITERATOR2 =>
         ResultString(specialName(s))
+      case Identifier.INDEX => ResultString("i")
 
       case _ =>
         if (provider.isLazy(s)) {
@@ -415,10 +439,17 @@ class GoTranslator(out: StringLanguageOutputWriter, provider: TypeProvider, impo
     ResultLocalVar(v)
   }
 
-  def userType(dataType: UserType, io: String) = {
+  def userType(t: UserType, io: String) = {
     val v = allocateLocalVar()
-    out.puts(s"${localVarName(v)} := new(${GoCompiler.types2class(dataType.classSpec.get.name)})")
-    out.puts(s"err = ${localVarName(v)}.Read($io, this, this._root)")
+    val parent = t.forcedParent match {
+      case Some(USER_TYPE_NO_PARENT) => "nil"
+      case Some(fp) => translate(fp)
+      case None => "this"
+    }
+    val root = if (t.isOpaque) "nil" else "this._root"
+    val addParams = t.args.map((a) => translate(a)).mkString(", ")
+    out.puts(s"${localVarName(v)} := New${GoCompiler.types2class(t.classSpec.get.name)}($addParams)")
+    out.puts(s"err = ${localVarName(v)}.Read($io, $parent, $root)")
     outAddErrCheck()
     ResultLocalVar(v)
   }
