@@ -19,11 +19,9 @@ class AwkwardClassCompiler(classSpecs: ClassSpecs, override val topClass: ClassS
 	extends ClassCompiler(classSpecs, topClass, config, AwkwardCompiler) 
 {
 
-  val importListSrc = new CppImportList
-  val importListHdr = new CppImportList
-
-  override val provider = new ClassTypeProvider(classSpecs, topClass)
-  val translator = new CppTranslator(provider, importListSrc, importListHdr, config)
+  val awklang = lang.asInstanceOf[AwkwardCompiler]
+  
+  //val translator = new CppTranslator(provider, importListSrc, importListHdr, config)
   val links = ListBuffer[(String, String, String)]()
 
   def nowClass: ClassSpec = provider.nowClass
@@ -143,7 +141,7 @@ class AwkwardClassCompiler(classSpecs: ClassSpecs, override val topClass: ClassS
         outSrc.puts(s"${topClassName}s.integer($name)")
         outSrc.puts*/
       case t: StrFromBytesType =>
-        val expr = translator.bytesToStr(AwkwardCompiler.parseExprBytes2(t.bytes, "ks"), Ast.expr.Str(t.encoding))
+        val expr = awklang.translator.bytesToStr(awklang.parseExprBytes2(t.bytes, "ks"), Ast.expr.Str(t.encoding))
         
         outSrc.puts(s"${AwkwardCompiler.kaitaiType2NativeType(dataType)} ${name} = $expr")
         outSrc.puts(s"${topClassName}s.field_check(" + "\"" + s"$name" + "\");")
@@ -170,56 +168,7 @@ class AwkwardClassCompiler(classSpecs: ClassSpecs, override val topClass: ClassS
       }
     })
   }
-
-  def expression(e: Ast.expr): String = translator.translate(e) 
-
-  def parseExpr(dataType: DataType, assignType: DataType, io: String, defEndian: Option[FixedEndian]): String = {
-    dataType match {
-      case t: ReadableType =>
-        s"$io->read_${t.apiCall(defEndian)}()"
-      case blt: BytesLimitType =>
-        s"$io->read_bytes(${expression(blt.size)})"
-      case _: BytesEosType =>
-        s"$io->read_bytes_full()"
-      case BytesTerminatedType(terminator, include, consume, eosError, _) =>
-        s"$io->read_bytes_term($terminator, $include, $consume, $eosError)"
-      case BitsType1 =>
-        s"$io->read_bits_int(1)"
-      case BitsType(width: Int) =>
-        s"$io->read_bits_int($width)"
-      case t: UserType =>
-        val addParams = Utils.join(t.args.map((a) => translator.translate(a)), "", ", ", ", ")
-        val addArgs = if (t.isOpaque) {
-          ""
-        } else {
-          val parent = t.forcedParent match {
-            case Some(USER_TYPE_NO_PARENT) => "// This user type has no parent"
-            case Some(fp) => translator.translate(fp)
-            case None =>
-              config.cppConfig.pointers match {
-                case RawPointers | UniqueAndRawPointers => "this"
-                case SharedPointers => s"shared_from_this()"
-              }
-          }
-          val addEndian = t.classSpec.get.meta.endian match {
-            case Some(InheritedEndian) => ", m__is_le"
-            case _ => ""
-          }
-          "//, $parent, ${privateMemberName(RootIdentifier)}$addEndian"
-        }
-        config.cppConfig.pointers match {
-          case RawPointers =>
-            s"new ${AwkwardCompiler.types2class(t.name)}($addParams$io$addArgs)"
-          case SharedPointers =>
-            s"std::make_shared<${AwkwardCompiler.types2class(t.name)}>($addParams$io$addArgs)"
-          case UniqueAndRawPointers =>
-            importListSrc.addSystem("memory")
-            // C++14
-            //s"std::make_unique<${AwkwardCompiler.types2class(t.name)}>($addParams$io$addArgs)"
-            s"std::unique_ptr<${AwkwardCompiler.types2class(t.name)}>(new ${AwkwardCompiler.types2class(t.name)}($addParams$io$addArgs))"
-        }
-    }
-  }
+  
 
 /*def compileSwitch(attrName: String, st: SwitchType): Unit = {
 
