@@ -153,7 +153,7 @@ class AwkwardClassCompiler(classSpecs: ClassSpecs, override val topClass: ClassS
         outSrc.puts(s"${topClassName}s.integer($name);")
         outSrc.puts
     	}
-    }
+  }
 
   def compileSeq(className: List[String], curClass: ClassSpec): Unit = {
     //tableStart(className, "seq")
