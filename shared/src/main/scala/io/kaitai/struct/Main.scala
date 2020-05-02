@@ -1,7 +1,7 @@
 package io.kaitai.struct
 
 import io.kaitai.struct.format.{ClassSpec, ClassSpecs, GenericStructClassSpec}
-import io.kaitai.struct.languages.{GoCompiler, RustCompiler, NimCompiler}
+import io.kaitai.struct.languages.{GoCompiler, RustCompiler, NimCompiler, AwkwardCompiler}
 import io.kaitai.struct.languages.components.LanguageCompilerStatic
 import io.kaitai.struct.precompile._
 
@@ -75,7 +75,7 @@ object Main {
     val config = updateConfig(conf, spec)
 
     val cc = lang match {
-      case AwkwardClassCompiler => 
+      case AwkwardCompiler => 
         new AwkwardClassCompiler(specs, spec, config)
       case GraphvizClassCompiler =>
         new GraphvizClassCompiler(specs, spec)
