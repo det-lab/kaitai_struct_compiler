@@ -12,7 +12,8 @@ import io.kaitai.struct.translators.{CppTranslator, TypeDetector}
 
 import scala.collection.mutable.ListBuffer
 
-class AwkwardCompiler(val typeProvider: ClassTypeProvider, classSpecs: ClassSpecs, val topClass: ClassSpec, config: RuntimeConfig) 
+//class AwkwardCompiler(val typeProvider: ClassTypeProvider, classSpecs: ClassSpecs, val topClass: ClassSpec, config: RuntimeConfig) 
+class AwkwardCompiler(val typeProvider: ClassTypeProvider, config: RuntimeConfig) 
   extends LanguageCompiler(typeProvider, config)
     with ObjectOrientedLanguage
     with AllocateAndStoreIO
@@ -203,10 +204,10 @@ object AwkwardCompiler extends LanguageCompilerStatic {
   // FIXME: Unused, should be probably separated from LanguageCompilerStatic
   override def getCompiler(
     tp: ClassTypeProvider,
-    classSpecs: ClassSpecs, 
-    topClass: ClassSpec,
+    //classSpecs: ClassSpecs, 
+    //topClass: ClassSpec,
     config: RuntimeConfig
-  ): LanguageCompiler = new AwkwardCompiler(tp, classSpecs, topClass, config)
+  ): LanguageCompiler = new AwkwardCompiler(tp, config) //classSpecs, topClass, config)
 
   def type2class(name: List[String]) = name.last
   def type2display(name: List[String]) = name.map(Utils.upperCamelCase).mkString("::")

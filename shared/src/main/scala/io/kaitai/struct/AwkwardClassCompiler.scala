@@ -15,9 +15,11 @@ import io.kaitai.struct.translators.{CppTranslator, TypeDetector}
 
 import scala.collection.mutable.ListBuffer
 
-class AwkwardClassCompiler(classSpecs: ClassSpecs, override val topClass: ClassSpec, config: RuntimeConfig) 
-	extends ClassCompiler(classSpecs, topClass, config, AwkwardCompiler) 
-{
+class AwkwardClassCompiler(
+  classSpecs: ClassSpecs, 
+  override val topClass: ClassSpec, 
+  config: RuntimeConfig) 
+	extends ClassCompiler(classSpecs, topClass, config, AwkwardCompiler) {
 
   val awklang = lang.asInstanceOf[AwkwardCompiler]
   
