@@ -118,7 +118,7 @@ class PHPCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
     params.foreach((p) => handleAssignmentSimple(p.id, paramName(p.id)))
   }
 
-  override def runRead(): Unit =
+  override def runRead(name: List[String]): Unit =
     out.puts("$this->_read();")
 
   override def runReadCalc(): Unit = {
@@ -343,10 +343,10 @@ class PHPCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
         s"$io->readBytesFull()"
       case BytesTerminatedType(terminator, include, consume, eosError, _) =>
         s"$io->readBytesTerm($terminator, $include, $consume, $eosError)"
-      case BitsType1 =>
-        s"$io->readBitsInt(1) != 0"
-      case BitsType(width: Int) =>
-        s"$io->readBitsInt($width)"
+      case BitsType1(bitEndian) =>
+        s"$io->readBitsInt${Utils.upperCamelCase(bitEndian.toSuffix)}(1) != 0"
+      case BitsType(width: Int, bitEndian) =>
+        s"$io->readBitsInt${Utils.upperCamelCase(bitEndian.toSuffix)}($width)"
       case t: UserType =>
         val addParams = Utils.join(t.args.map((a) => translator.translate(a)), "", ", ", ", ")
         val addArgs = if (t.isOpaque) {
@@ -484,7 +484,7 @@ class PHPCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
       case _: ArrayType => "array"
 
       case KaitaiStructType | CalcKaitaiStructType => kstructName
-      case KaitaiStreamType => kstreamName
+      case KaitaiStreamType | OwnedKaitaiStreamType => kstreamName
     }
   }
 

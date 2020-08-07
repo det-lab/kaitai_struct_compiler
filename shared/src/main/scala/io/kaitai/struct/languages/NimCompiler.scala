@@ -8,7 +8,7 @@ import io.kaitai.struct.languages.components._
 import io.kaitai.struct.translators.NimTranslator
 import io.kaitai.struct.{ClassTypeProvider, RuntimeConfig, Utils}
 
-class NimCompiler(val typeProvider: ClassTypeProvider, config: RuntimeConfig)
+class NimCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
   extends LanguageCompiler(typeProvider, config)
     with SingleOutputFile
     with EveryReadIsExpression
@@ -111,24 +111,18 @@ class NimCompiler(val typeProvider: ClassTypeProvider, config: RuntimeConfig)
         }
         s"$srcExpr.processRotateLeft(int($expr))"
       case ProcessCustom(name, args) =>
-        val namespace = name.init.mkString("/")
-        val procPath = namespace + (if (namespace.nonEmpty) "/" else "") + name.last
-        val procName = camelCase(name.last, false)
-        importList.add(config.nimOpaque + procPath)
-        s"$procName($srcExpr, ${args.map(expression).mkString(", ")})"
+        val namespace = name.head
+        val procPath = name.mkString(".")
+        importList.add(namespace)
+        s"$procPath($srcExpr, ${args.map(expression).mkString(", ")})"
     }
     handleAssignment(varDest, expr, rep, false)
   }
   override def attributeDeclaration(attrName: Identifier, attrType: DataType, isNullable: Boolean): Unit = {
-    out.puts(s"${idToStr(attrName)}*: ${ksToNim(attrType)}")
+    out.puts(s"`${idToStr(attrName)}`*: ${ksToNim(attrType)}")
   }
   override def instanceDeclaration(attrName: InstanceIdentifier, attrType: DataType, isNullable: Boolean): Unit = {
-    attrType match {
-      case _: BytesType => out.puts(s"${idToStr(attrName)}*: ${ksToNim(attrType)}")
-      case _: StrType => out.puts(s"${idToStr(attrName)}*: ${ksToNim(attrType)}")
-      case _: ArrayType => out.puts(s"${idToStr(attrName)}*: ${ksToNim(attrType)}")
-      case _ => out.puts(s"${idToStr(attrName)}*: Option[${ksToNim(attrType)}]")
-    }
+    attributeDeclaration(attrName, attrType, isNullable)
   }
   override def attributeReader(attrName: Identifier, attrType: DataType, isNullable: Boolean): Unit = {}
   override def classConstructorHeader(name: List[String], parentType: DataType, rootClassName: List[String], isHybrid: Boolean, params: List[ParamDefSpec]): Unit = {}
@@ -181,37 +175,44 @@ class NimCompiler(val typeProvider: ClassTypeProvider, config: RuntimeConfig)
     out.dec
     out.dec
   }
+  // For this to work, we need a {.lenientCase.} pragma which disables nim's exhaustive case coverage check
   override def enumDeclaration(curClass: List[String], enumName: String, enumColl: Seq[(Long, EnumValueSpec)]): Unit = {
     val enumClass = namespaced(curClass)
-    out.puts(s"defineEnum(${enumClass}_$enumName)")
-  }
-  def enumFooter: Unit = {
-    universalFooter
-    out.puts
-  }
-  def enumTemplate: Unit = {
-    out.puts("template defineEnum(typ) =")
+    out.puts(s"${enumClass}_${camelCase(enumName, true)}* = enum")
     out.inc
-    out.puts("type typ* = distinct int64")
-    out.puts("proc `==`*(x, y: typ): bool {.borrow.}")
+    enumColl.foreach { case (id, label) =>
+      val order = if (s"$id" == "-9223372036854775808") "low(int64)" else s"$id"
+      out.puts(s"${label.name} = $order")
+    }
     out.dec
   }
-  def enumTemplateFooter: Unit = out.puts
-  def enumHeader: Unit = {
-    out.puts("const")
-    out.inc
-  }
-  def enumConstantsFooter: Unit = {
-    universalFooter
-    out.puts
-  }
-  def enumConstants(curClass: List[String], enumName: String,  enumColl: Seq[(Long, EnumValueSpec)]): Unit = {
-    val enumClass = namespaced(curClass)
-    enumColl.foreach { case (id: Long, label: EnumValueSpec) =>
-      // This hack is needed because the lowest int64 literal is not supported in Nim
-      val const = if (s"$id" == "-9223372036854775808") "low(int64)" else s"$id"
-      out.puts(s"${label.name}* = ${enumClass}_$enumName($const)") }
-  }
+//  def enumFooter: Unit = {
+//    universalFooter
+//    out.puts
+//  }
+//  def enumTemplate: Unit = {
+//    out.puts("template defineEnum(typ) =")
+//    out.inc
+//    out.puts("type typ* = distinct int64")
+//    out.puts("proc `==`*(x, y: typ): bool {.borrow.}")
+//    out.dec
+//  }
+//  def enumTemplateFooter: Unit = out.puts
+//  def enumHeader: Unit = {
+//    out.puts("const")
+//    out.inc
+//  }
+//  def enumConstantsFooter: Unit = {
+//    universalFooter
+//    out.puts
+//  }
+//  def enumConstants(curClass: List[String], enumName: String,  enumColl: Seq[(Long, EnumValueSpec)]): Unit = {
+//    val enumClass = namespaced(curClass)
+//    enumColl.foreach { case (id: Long, label: EnumValueSpec) =>
+//      // This hack is needed because the lowest int64 literal is not supported in Nim
+//      val const = if (s"$id" == "-9223372036854775808") "low(int64)" else s"$id"
+//      out.puts(s"${label.name}* = ${enumClass}_$enumName($const)") }
+//  }
   override def fileHeader(topClassName: String): Unit = {
     importList.add(config.nimModule)
     importList.add("options")
@@ -226,7 +227,7 @@ class NimCompiler(val typeProvider: ClassTypeProvider, config: RuntimeConfig)
       case _: ArrayType => out.puts(s"if ${privateMemberName(instName)}.len != 0:")
       case _: StrType => out.puts(s"if ${privateMemberName(instName)}.len != 0:")
       case _: BytesType => out.puts(s"if ${privateMemberName(instName)}.len != 0:")
-      case _ => out.puts(s"if isSome(${privateMemberName(instName)}):")
+      case _ => out.puts(s"if ${privateMemberName(instName)} != nil:")
     }
       out.inc
       instanceReturn(instName, dataType)
@@ -241,12 +242,7 @@ class NimCompiler(val typeProvider: ClassTypeProvider, config: RuntimeConfig)
     out.puts
   }
   override def instanceReturn(instName: InstanceIdentifier, attrType: DataType): Unit = {
-    attrType match {
-      case _: ArrayType => out.puts(s"return ${privateMemberName(instName)}")
-      case _: StrType => out.puts(s"return ${privateMemberName(instName)}")
-      case _: BytesType => out.puts(s"return ${privateMemberName(instName)}")
-      case _ => out.puts(s"return get(${privateMemberName(instName)})")
-    }
+    out.puts(s"return ${privateMemberName(instName)}")
   }
   // def normalIO: String = ???
   override def outFileName(topClassName: String): String = s"$topClassName.nim"
@@ -296,7 +292,7 @@ class NimCompiler(val typeProvider: ClassTypeProvider, config: RuntimeConfig)
     }
   }
   // def results(topClass: ClassSpec): Map[String, String] = ???
-  override def runRead(): Unit = out.puts("read()") // TODO: missing type argument
+  override def runRead(name: List[String]): Unit = out.puts("read()") // TODO: missing type argument
   override def runReadCalc(): Unit = {
     out.puts
     out.puts("if this.isLe:")
@@ -390,10 +386,10 @@ class NimCompiler(val typeProvider: ClassTypeProvider, config: RuntimeConfig)
         s"$io.readBytesFull()"
       case BytesTerminatedType(terminator, include, consume, eosError, _) =>
         s"$io.readBytesTerm($terminator, $include, $consume, $eosError)"
-      case BitsType1 =>
-        s"$io.readBitsInt(1) != 0"
-      case BitsType(width: Int) =>
-        s"$io.readBitsInt($width)"
+      case BitsType1(bitEndian) =>
+        s"$io.readBitsInt${camelCase(bitEndian.toSuffix, true)}(1) != 0"
+      case BitsType(width: Int, bitEndian) =>
+        s"$io.readBitsInt${camelCase(bitEndian.toSuffix, true)}($width)"
       case t: UserType =>
         val addArgs = {
           val parent = t.forcedParent match {
@@ -420,16 +416,15 @@ class NimCompiler(val typeProvider: ClassTypeProvider, config: RuntimeConfig)
   override def userTypeDebugRead(id: String, dataType: DataType, assignType: DataType): Unit = {} // TODO
 
   // Members declared in io.kaitai.struct.languages.components.SwitchOps
-  // Must override to always add an "else" clause (even if its body is "discard") because
-  // Nim enforces that all cases must be covered
-  override def switchCasesRender[T](
+  override def switchCasesUsingIf[T](
     id: Identifier,
     on: Ast.expr,
+    onType: DataType,
     cases: Map[Ast.expr, T],
     normalCaseProc: (T) => Unit,
     elseCaseProc: (T) => Unit
   ): Unit = {
-    switchStart(id, on)
+    switchIfStart(id, on, onType)
 
     // Pass 1: only normal case clauses
     var first = true
@@ -437,53 +432,44 @@ class NimCompiler(val typeProvider: ClassTypeProvider, config: RuntimeConfig)
     cases.foreach { case (condition, result) =>
       condition match {
         case SwitchType.ELSE_CONST =>
-        // skip for now
+          // skip for now
         case _ =>
           if (first) {
-            switchCaseFirstStart(condition)
+            switchIfCaseFirstStart(condition)
             first = false
           } else {
-            switchCaseStart(condition)
+            switchIfCaseStart(condition)
           }
           normalCaseProc(result)
-          switchCaseEnd()
+          switchIfCaseEnd()
       }
     }
 
     // Pass 2: else clause, if it is there
     cases.get(SwitchType.ELSE_CONST).foreach { (result) =>
-      switchElseStart()
-      elseCaseProc(result)
-      switchElseEnd()
+      if (cases.size == 1) {
+        elseCaseProc(result)
+      } else {
+        switchIfElseStart()
+        elseCaseProc(result)
+        switchIfElseEnd()
+      }
     }
-    if (cases.get(SwitchType.ELSE_CONST).isEmpty)
-      switchEnd()
-  }
-  override def switchCaseEnd(): Unit = universalFooter
-  override def switchCaseStart(condition: Ast.expr): Unit = {
-    out.puts(s"of ${expression(condition)}:")
-    out.inc
-  }
-  override def switchElseStart(): Unit = {
-    out.puts("else:")
-    out.inc
-  }
-  override def switchEnd(): Unit = out.puts("else: discard")
-  override def switchStart(id: Identifier, on: Ast.expr): Unit = {
-    // A tiny bit hacky, might come up with a better solution
-    val expr = translator.detectType(on) match {
-      case _: IntType => s"ord(${expression(on)})"
-      case _ => s"${expression(on)}"
-    }
-    out.puts(s"case $expr")
+
+    switchIfEnd()
   }
 
+  override def switchCaseEnd(): Unit = universalFooter
+  override def switchCaseStart(condition: Ast.expr): Unit = {}
+  override def switchElseStart(): Unit = {}
+  override def switchEnd(): Unit = {}
+  override def switchStart(id: Identifier, on: Ast.expr): Unit = {}
+
   // Members declared in io.kaitai.struct.languages.components.SwitchIfOps
-  override def switchRequiresIfs(onType: DataType): Boolean = onType match {
-    case _: IntType | _: EnumType | _: StrType => false
-    case _ => true
-  }
+  override def switchRequiresIfs(onType: DataType): Boolean = true
   override def switchIfStart(id: Identifier, on: Ast.expr, onType: DataType): Unit = {
+    out.puts("block:")
+    out.inc
     out.puts(s"let on = ${expression(on)}")
   }
   override def switchIfCaseFirstStart(condition: Ast.expr): Unit = {
@@ -499,7 +485,7 @@ class NimCompiler(val typeProvider: ClassTypeProvider, config: RuntimeConfig)
     out.puts("else:")
     out.inc
   }
-  override def switchIfEnd(): Unit = {}
+  override def switchIfEnd(): Unit = out.dec
 
   // Members declared in io.kaitai.struct.languages.components.UniversalDoc
   override def universalDoc(doc: DocSpec): Unit = {
@@ -560,7 +546,7 @@ object NimCompiler extends LanguageCompilerStatic
       case FloatMultiType(Width4, _) => "float32"
       case FloatMultiType(Width8, _) => "float64"
 
-      case BitsType(_) => "uint64"
+      case BitsType(_, _) => "uint64"
 
       case _: BooleanType => "bool"
       case CalcIntType => "int"
@@ -570,7 +556,7 @@ object NimCompiler extends LanguageCompilerStatic
       case _: BytesType => "seq[byte]"
 
       case KaitaiStructType | CalcKaitaiStructType => "KaitaiStruct"
-      case KaitaiStreamType => "KaitaiStream"
+      case KaitaiStreamType | OwnedKaitaiStreamType => "KaitaiStream"
 
       case t: UserType => namespaced(t.classSpec match {
         case Some(cs) => cs.name
@@ -580,6 +566,8 @@ object NimCompiler extends LanguageCompilerStatic
       case t: EnumType => namespaced(t.enumSpec.get.name)
       case at: ArrayType => s"seq[${ksToNim(at.elType)}]"
       case st: SwitchType => ksToNim(st.combinedType)
+
+      case AnyType => "KaitaiStruct"
     }
   }
 }

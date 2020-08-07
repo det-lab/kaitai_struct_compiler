@@ -9,7 +9,7 @@ import io.kaitai.struct.format._
 import io.kaitai.struct.languages.components._
 import io.kaitai.struct.translators.{CSharpTranslator, TypeDetector}
 
-class CSharpCompiler(val typeProvider: ClassTypeProvider, config: RuntimeConfig)
+class CSharpCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
   extends LanguageCompiler(typeProvider, config)
     with UpperCamelCaseClasses
     with ObjectOrientedLanguage
@@ -114,7 +114,7 @@ class CSharpCompiler(val typeProvider: ClassTypeProvider, config: RuntimeConfig)
 
   override def classConstructorFooter: Unit = fileFooter(null)
 
-  override def runRead(): Unit =
+  override def runRead(name: List[String]): Unit =
     out.puts("_read();")
 
   override def runReadCalc(): Unit = {
@@ -362,6 +362,15 @@ class CSharpCompiler(val typeProvider: ClassTypeProvider, config: RuntimeConfig)
   override def handleAssignmentTempVar(dataType: DataType, id: String, expr: String): Unit =
     out.puts(s"${kaitaiType2NativeType(dataType)} $id = $expr;")
 
+  override def blockScopeHeader: Unit = {
+    out.puts("{")
+    out.inc
+  }
+  override def blockScopeFooter: Unit = {
+    out.dec
+    out.puts("}")
+  }
+
   override def parseExpr(dataType: DataType, assignType: DataType, io: String, defEndian: Option[FixedEndian]): String = {
     dataType match {
       case t: ReadableType =>
@@ -372,10 +381,10 @@ class CSharpCompiler(val typeProvider: ClassTypeProvider, config: RuntimeConfig)
         s"$io.ReadBytesFull()"
       case BytesTerminatedType(terminator, include, consume, eosError, _) =>
         s"$io.ReadBytesTerm($terminator, $include, $consume, $eosError)"
-      case BitsType1 =>
-        s"$io.ReadBitsInt(1) != 0"
-      case BitsType(width: Int) =>
-        s"$io.ReadBitsInt($width)"
+      case BitsType1(bitEndian) =>
+        s"$io.ReadBitsInt${Utils.upperCamelCase(bitEndian.toSuffix)}(1) != 0"
+      case BitsType(width: Int, bitEndian) =>
+        s"$io.ReadBitsInt${Utils.upperCamelCase(bitEndian.toSuffix)}($width)"
       case t: UserType =>
         val addParams = Utils.join(t.args.map((a) => translator.translate(a)), "", ", ", ", ")
         val addArgs = if (t.isOpaque) {
@@ -633,7 +642,7 @@ object CSharpCompiler extends LanguageCompilerStatic
       case FloatMultiType(Width4, _) => "float"
       case FloatMultiType(Width8, _) => "double"
 
-      case BitsType(_) => "ulong"
+      case BitsType(_, _) => "ulong"
 
       case CalcIntType => "int"
       case CalcFloatType => "double"
@@ -644,7 +653,7 @@ object CSharpCompiler extends LanguageCompilerStatic
 
       case AnyType => "object"
       case KaitaiStructType | CalcKaitaiStructType => kstructName
-      case KaitaiStreamType => kstreamName
+      case KaitaiStreamType | OwnedKaitaiStreamType => kstreamName
 
       case t: UserType => types2class(t.name)
       case EnumType(name, _) => types2class(name)

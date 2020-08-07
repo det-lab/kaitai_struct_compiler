@@ -16,6 +16,7 @@ class PerlCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
     with UpperCamelCaseClasses
     with AllocateIOLocalVar
     with FixedContentsUsingArrayByteLiteral
+    with SwitchIfOps
     with EveryReadIsExpression {
 
   import PerlCompiler._
@@ -97,7 +98,7 @@ class PerlCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
     universalFooter
   }
 
-  override def runRead(): Unit =
+  override def runRead(name: List[String]): Unit =
     out.puts("$self->_read();")
 
   override def runReadCalc(): Unit = {
@@ -302,10 +303,10 @@ class PerlCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
         s"$io->read_bytes_full()"
       case BytesTerminatedType(terminator, include, consume, eosError, _) =>
         s"$io->read_bytes_term($terminator, ${boolLiteral(include)}, ${boolLiteral(consume)}, ${boolLiteral(eosError)})"
-      case BitsType1 =>
-        s"$io->read_bits_int(1)"
-      case BitsType(width: Int) =>
-        s"$io->read_bits_int($width)"
+      case BitsType1(bitEndian) =>
+        s"$io->read_bits_int_${bitEndian.toSuffix}(1)"
+      case BitsType(width: Int, bitEndian) =>
+        s"$io->read_bits_int_${bitEndian.toSuffix}($width)"
       case t: UserType =>
         val addArgs = if (t.isOpaque) {
           ""
@@ -336,29 +337,36 @@ class PerlCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
     expr2
   }
 
-  override def switchStart(id: Identifier, on: Ast.expr): Unit = {
+  override def switchStart(id: Identifier, on: Ast.expr): Unit = {}
+  override def switchCaseStart(condition: Ast.expr): Unit = {}
+  override def switchCaseEnd(): Unit = {}
+  override def switchElseStart(): Unit = {}
+  override def switchEnd(): Unit = {}
+
+  override def switchRequiresIfs(onType: DataType): Boolean = true
+
+  override def switchIfStart(id: Identifier, on: Ast.expr, onType: DataType): Unit = {
     typeProvider._currentSwitchType = Some(translator.detectType(on))
     out.puts(s"my $$_on = ${expression(on)};")
   }
 
-  override def switchCaseFirstStart(condition: Ast.expr): Unit = {
+  override def switchIfCaseFirstStart(condition: Ast.expr): Unit = {
     out.puts(s"if (${expression(onComparisonExpr(condition))}) {")
     out.inc
   }
 
-  override def switchCaseStart(condition: Ast.expr): Unit = {
+  override def switchIfCaseStart(condition: Ast.expr): Unit = {
     out.puts(s"elsif (${expression(onComparisonExpr(condition))}) {")
     out.inc
   }
+  override def switchIfCaseEnd(): Unit = universalFooter
 
-  override def switchCaseEnd(): Unit = universalFooter
-
-  override def switchElseStart(): Unit = {
+  override def switchIfElseStart(): Unit = {
     out.puts(s"else {")
     out.inc
   }
 
-  override def switchEnd(): Unit = {}
+  override def switchIfEnd(): Unit = {}
 
   /**
     * Generates comparison expression by a given condition expression, comparing

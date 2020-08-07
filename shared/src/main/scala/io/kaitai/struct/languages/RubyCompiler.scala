@@ -93,7 +93,7 @@ class RubyCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
     }
   }
 
-  override def runRead(): Unit = {
+  override def runRead(name: List[String]): Unit = {
     out.puts("_read")
   }
 
@@ -352,10 +352,10 @@ class RubyCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
         s"$io.read_bytes_full"
       case BytesTerminatedType(terminator, include, consume, eosError, _) =>
         s"$io.read_bytes_term($terminator, $include, $consume, $eosError)"
-      case BitsType1 =>
-        s"$io.read_bits_int(1) != 0"
-      case BitsType(width: Int) =>
-        s"$io.read_bits_int($width)"
+      case BitsType1(bitEndian) =>
+        s"$io.read_bits_int_${bitEndian.toSuffix}(1) != 0"
+      case BitsType(width: Int, bitEndian) =>
+        s"$io.read_bits_int_${bitEndian.toSuffix}($width)"
       case t: UserType =>
         val addParams = Utils.join(t.args.map((a) => translator.translate(a)), ", ", ", ", "")
         val addArgs = if (t.isOpaque) {

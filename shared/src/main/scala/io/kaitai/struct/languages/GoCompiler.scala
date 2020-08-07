@@ -88,7 +88,7 @@ class GoCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
 
   override def classConstructorFooter: Unit = {}
 
-  override def runRead(): Unit = {
+  override def runRead(name: List[String]): Unit = {
     out.puts("this.Read()")
   }
 
@@ -389,6 +389,8 @@ class GoCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
     out.puts(s"${privateMemberName(id)} = $expr")
   }
 
+  def handleAssignmentTempVar(dataType: DataType, id: String, expr: String): Unit = ???
+
   override def parseExpr(dataType: DataType, io: String, defEndian: Option[FixedEndian]): String = {
     dataType match {
       case t: ReadableType =>
@@ -399,10 +401,10 @@ class GoCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
         s"$io.ReadBytesFull()"
       case BytesTerminatedType(terminator, include, consume, eosError, _) =>
         s"$io.ReadBytesTerm($terminator, $include, $consume, $eosError)"
-      case BitsType1 =>
-        s"$io.ReadBitsInt(1)"
-      case BitsType(width: Int) =>
-        s"$io.ReadBitsInt($width)"
+      case BitsType1(bitEndian) =>
+        s"$io.ReadBitsInt${Utils.upperCamelCase(bitEndian.toSuffix)}(1)"
+      case BitsType(width: Int, bitEndian) =>
+        s"$io.ReadBitsInt${Utils.upperCamelCase(bitEndian.toSuffix)}($width)"
       case t: UserType =>
         val addArgs = if (t.isOpaque) {
           ""
@@ -451,13 +453,12 @@ class GoCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
   override def switchEnd(): Unit =
     out.puts("}")
 
-  override def switchShouldUseCompareFn(onType: DataType): Option[String] = {
+  override def switchShouldUseCompareFn(onType: DataType): (Option[String], () => Unit) = {
     onType match {
       case _: BytesType =>
-        importList.add("bytes")
-        Some("bytes.Equal")
+        (Some("bytes.Equal"), () => importList.add("bytes"))
       case _ =>
-        None
+        (None, () => {})
     }
   }
 
@@ -587,7 +588,7 @@ object GoCompiler extends LanguageCompilerStatic
       case FloatMultiType(Width4, _) => "float32"
       case FloatMultiType(Width8, _) => "float64"
 
-      case BitsType(_) => "uint64"
+      case BitsType(_, _) => "uint64"
 
       case _: BooleanType => "bool"
       case CalcIntType => "int"
@@ -597,7 +598,7 @@ object GoCompiler extends LanguageCompilerStatic
       case _: BytesType => "[]byte"
 
       case AnyType => "interface{}"
-      case KaitaiStreamType => "*" + kstreamName
+      case KaitaiStreamType | OwnedKaitaiStreamType => "*" + kstreamName
       case KaitaiStructType | CalcKaitaiStructType => kstructName
 
       case t: UserType => "*" + types2class(t.classSpec match {

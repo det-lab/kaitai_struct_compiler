@@ -25,12 +25,25 @@ class LuaTranslator(provider: TypeProvider, importList: ImportList) extends Base
   override def strLiteralUnicode(code: Char): String =
     "\\u{%04x}".format(code.toInt)
 
+  override def numericBinOp(left: Ast.expr, op: Ast.operator, right: Ast.expr) = {
+    (detectType(left), detectType(right), op) match {
+      case (_: IntType, _: IntType, Ast.operator.Div) =>
+        s"math.floor(${translate(left)} / ${translate(right)})"
+      case _ =>
+        super.numericBinOp(left, op, right)
+    }
+  }
+
   override def arraySubscript(container: Ast.expr, idx: Ast.expr): String = {
     // Lua indexes start at 1, so we need to offset them
     s"${translate(container)}[${translate(idx)} + 1]"
   }
-  override def doIfExp(condition: Ast.expr, ifTrue: Ast.expr, ifFalse: Ast.expr): String =
-    s"(((${translate(condition)}) and (${translate(ifTrue)})) or (${translate(ifFalse)}))"
+  override def doIfExp(condition: Ast.expr, ifTrue: Ast.expr, ifFalse: Ast.expr): String = {
+    importList.add("local utils = require(\"utils\")")
+
+    // http://lua-users.org/wiki/TernaryOperator (section Boxing/unboxing, using functions)
+    s"utils.box_unwrap((${translate(condition)}) and utils.box_wrap(${translate(ifTrue)}) or (${translate(ifFalse)}))"
+  }
 
   override def doBoolLiteral(n: Boolean): String =
     if (n) "true" else "false"
@@ -104,7 +117,7 @@ class LuaTranslator(provider: TypeProvider, importList: ImportList) extends Base
 
     s"utils.byte_array_min(${translate(a)})"
   }
-  override def bytesMax(a: Ast.expr): String ={
+  override def bytesMax(a: Ast.expr): String = {
     importList.add("local utils = require(\"utils\")")
 
     s"utils.byte_array_max(${translate(a)})"

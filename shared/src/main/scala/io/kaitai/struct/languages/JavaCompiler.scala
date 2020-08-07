@@ -9,7 +9,7 @@ import io.kaitai.struct.format._
 import io.kaitai.struct.languages.components._
 import io.kaitai.struct.translators.JavaTranslator
 
-class JavaCompiler(val typeProvider: ClassTypeProvider, config: RuntimeConfig)
+class JavaCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
   extends LanguageCompiler(typeProvider, config)
     with SingleOutputFile
     with UpperCamelCaseClasses
@@ -161,7 +161,7 @@ class JavaCompiler(val typeProvider: ClassTypeProvider, config: RuntimeConfig)
     params.foreach((p) => handleAssignmentSimple(p.id, paramName(p.id)))
   }
 
-  override def runRead(): Unit =
+  override def runRead(name: List[String]): Unit =
     out.puts("_read();")
 
   override def runReadCalc(): Unit = {
@@ -436,6 +436,12 @@ class JavaCompiler(val typeProvider: ClassTypeProvider, config: RuntimeConfig)
   override def handleAssignmentTempVar(dataType: DataType, id: String, expr: String): Unit =
     out.puts(s"${kaitaiType2JavaType(dataType)} $id = $expr;")
 
+  override def blockScopeHeader: Unit = {
+    out.puts("{")
+    out.inc
+  }
+  override def blockScopeFooter: Unit = universalFooter
+
   override def parseExpr(dataType: DataType, assignType: DataType, io: String, defEndian: Option[FixedEndian]): String = {
     val expr = dataType match {
       case t: ReadableType =>
@@ -446,10 +452,10 @@ class JavaCompiler(val typeProvider: ClassTypeProvider, config: RuntimeConfig)
         s"$io.readBytesFull()"
       case BytesTerminatedType(terminator, include, consume, eosError, _) =>
         s"$io.readBytesTerm($terminator, $include, $consume, $eosError)"
-      case BitsType1 =>
-        s"$io.readBitsInt(1) != 0"
-      case BitsType(width: Int) =>
-        s"$io.readBitsInt($width)"
+      case BitsType1(bitEndian) =>
+        s"$io.readBitsInt${Utils.upperCamelCase(bitEndian.toSuffix)}(1) != 0"
+      case BitsType(width: Int, bitEndian) =>
+        s"$io.readBitsInt${Utils.upperCamelCase(bitEndian.toSuffix)}($width)"
       case t: UserType =>
         val addArgs = if (t.isOpaque) {
           ""
@@ -800,7 +806,7 @@ object JavaCompiler extends LanguageCompilerStatic
       case FloatMultiType(Width4, _) => "float"
       case FloatMultiType(Width8, _) => "double"
 
-      case BitsType(_) => "long"
+      case BitsType(_, _) => "long"
 
       case _: BooleanType => "boolean"
       case CalcIntType => "int"
@@ -810,7 +816,7 @@ object JavaCompiler extends LanguageCompilerStatic
       case _: BytesType => "byte[]"
 
       case AnyType => "Object"
-      case KaitaiStreamType => kstreamName
+      case KaitaiStreamType | OwnedKaitaiStreamType => kstreamName
       case KaitaiStructType | CalcKaitaiStructType => kstructName
 
       case t: UserType => types2class(t.name)
@@ -844,7 +850,7 @@ object JavaCompiler extends LanguageCompilerStatic
       case FloatMultiType(Width4, _) => "Float"
       case FloatMultiType(Width8, _) => "Double"
 
-      case BitsType(_) => "Long"
+      case BitsType(_, _) => "Long"
 
       case _: BooleanType => "Boolean"
       case CalcIntType => "Integer"
@@ -854,7 +860,7 @@ object JavaCompiler extends LanguageCompilerStatic
       case _: BytesType => "byte[]"
 
       case AnyType => "Object"
-      case KaitaiStreamType => kstreamName
+      case KaitaiStreamType | OwnedKaitaiStreamType => kstreamName
       case KaitaiStructType | CalcKaitaiStructType => kstructName
 
       case t: UserType => types2class(t.name)

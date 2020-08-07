@@ -108,7 +108,7 @@ class RustCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
     out.puts
   }
 
-  override def runRead(): Unit = {
+  override def runRead(name: List[String]): Unit = {
 
   }
 
@@ -326,9 +326,9 @@ class RustCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
         s"$io.read_bytes_full()?"
       case BytesTerminatedType(terminator, include, consume, eosError, _) =>
         s"$io.read_bytes_term($terminator, $include, $consume, $eosError)?"
-      case BitsType1 =>
+      case BitsType1(bitEndian) =>
         s"$io.read_bits_int(1)? != 0"
-      case BitsType(width: Int) =>
+      case BitsType(width: Int, bitEndian) =>
         s"$io.read_bits_int($width)?"
       case t: UserType =>
         val addParams = Utils.join(t.args.map((a) => translator.translate(a)), "", ", ", ", ")
@@ -400,7 +400,7 @@ class RustCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
 
   override def switchCaseStart(condition: Ast.expr): Unit = {
     if (switchIfs) {
-      out.puts(s"elss if ${switchCmpExpr(condition)} {")
+      out.puts(s"else if ${switchCmpExpr(condition)} {")
       out.inc
     } else {
       out.puts(s"${expression(condition)} => {")
@@ -523,7 +523,7 @@ class RustCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
       case FloatMultiType(Width4, _) => "f32"
       case FloatMultiType(Width8, _) => "f64"
 
-      case BitsType(_) => "u64"
+      case BitsType(_, _) => "u64"
 
       case _: BooleanType => "bool"
       case CalcIntType => "i32"
@@ -544,7 +544,7 @@ class RustCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
 
       case at: ArrayType => s"Vec<${kaitaiType2NativeType(at.elType)}>"
 
-      case KaitaiStreamType => s"Option<Box<KaitaiStream>>"
+      case KaitaiStreamType | OwnedKaitaiStreamType => s"Option<Box<KaitaiStream>>"
       case KaitaiStructType | CalcKaitaiStructType => s"Option<Box<KaitaiStruct>>"
 
       case st: SwitchType => kaitaiType2NativeType(st.combinedType)
@@ -566,7 +566,7 @@ class RustCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
       case FloatMultiType(Width4, _) => "0"
       case FloatMultiType(Width8, _) => "0"
 
-      case BitsType(_) => "0"
+      case BitsType(_, _) => "0"
 
       case _: BooleanType => "false"
       case CalcIntType => "0"
@@ -580,7 +580,7 @@ class RustCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
 
       case ArrayTypeInStream(inType) => "vec!()"
 
-      case KaitaiStreamType => "None"
+      case KaitaiStreamType | OwnedKaitaiStreamType => "None"
       case KaitaiStructType => "None"
 
       case _: SwitchType => ""

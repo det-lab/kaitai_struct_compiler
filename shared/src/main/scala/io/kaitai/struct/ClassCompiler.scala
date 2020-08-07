@@ -133,7 +133,7 @@ class ClassCompiler(
     compileInit(curClass)
     curClass.instances.foreach { case (instName, _) => lang.instanceClear(instName) }
     if (lang.config.autoRead)
-      lang.runRead()
+      lang.runRead(curClass.name)
     lang.classConstructorFooter
   }
 
@@ -362,7 +362,7 @@ class ClassCompiler(
 
   def isUnalignedBits(dt: DataType): Boolean =
     dt match {
-      case _: BitsType | BitsType1 => true
+      case _: BitsType | _: BitsType1 => true
       case et: EnumType => isUnalignedBits(et.basedOn)
       case _ => false
     }

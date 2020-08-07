@@ -9,7 +9,7 @@ import io.kaitai.struct.{ClassTypeProvider, RuntimeConfig}
 import scala.collection.mutable.ListBuffer
 
 abstract class LanguageCompiler(
-  typeProvider: ClassTypeProvider,
+  val typeProvider: ClassTypeProvider,
   val config: RuntimeConfig
 ) extends SwitchOps with ValidateOps
   with ExtraAttrs {
@@ -81,7 +81,7 @@ abstract class LanguageCompiler(
   def classDestructorHeader(name: List[String], parentType: DataType, topClassName: List[String]): Unit = {}
   def classDestructorFooter: Unit = {}
 
-  def runRead(): Unit
+  def runRead(name: List[String]): Unit
   def runReadCalc(): Unit
   def readHeader(endian: Option[FixedEndian], isEmpty: Boolean): Unit
   def readFooter(): Unit
@@ -166,4 +166,7 @@ abstract class LanguageCompiler(
       case None => // ignore
     }
   }
+
+  def blockScopeHeader: Unit = {}
+  def blockScopeFooter: Unit = {}
 }

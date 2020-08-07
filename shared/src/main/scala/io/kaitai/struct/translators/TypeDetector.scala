@@ -57,7 +57,7 @@ class TypeDetector(provider: TypeProvider) {
         val t = EnumType(List(enumType.name), CalcIntType)
         t.enumSpec = Some(provider.resolveEnum(inType, enumType.name))
         t
-      case Ast.expr.Name(name: Ast.identifier) => provider.determineType(name.name)
+      case Ast.expr.Name(name: Ast.identifier) => provider.determineType(name.name).asNonOwning
       case Ast.expr.UnaryOp(op: Ast.unaryop, v: Ast.expr) =>
         val t = detectType(v)
         (t, op) match {
@@ -99,7 +99,7 @@ class TypeDetector(provider: TypeProvider) {
           case other => throw new TypeMismatchError(s"unable to switch over $other")
         }
       case Ast.expr.Subscript(container: Ast.expr, idx: Ast.expr) =>
-        detectType(container) match {
+        (detectType(container) match {
           case ArrayTypeInStream(elType: DataType) =>
             detectType(idx) match {
               case _: IntType => elType
@@ -112,11 +112,11 @@ class TypeDetector(provider: TypeProvider) {
             }
           case _: BytesType => Int1Type(false)
           case cntType => throw new TypeMismatchError(s"unable to apply operation [] to $cntType")
-        }
+        }).asNonOwning
       case Ast.expr.Attribute(value: Ast.expr, attr: Ast.identifier) =>
-        detectAttributeType(value, attr)
+        detectAttributeType(value, attr).asNonOwning
       case call: Ast.expr.Call =>
-        detectCallType(call)
+        detectCallType(call).asNonOwning
       case Ast.expr.List(values: Seq[Ast.expr]) =>
         detectArrayType(values) match {
           case Int1Type(_) => CalcBytesType
@@ -152,7 +152,7 @@ class TypeDetector(provider: TypeProvider) {
         }
       case t: UserType =>
         t.classSpec match {
-          case Some(tt) => provider.determineType(tt, attr.name)
+          case Some(tt) => provider.determineType(tt, attr.name).asNonOwning
           case None => throw new TypeUndecidedError(s"expression '$value' has undecided type '${t.name}' (while asking for attribute '${attr.name}')")
         }
       case _: BytesType =>
@@ -190,7 +190,7 @@ class TypeDetector(provider: TypeProvider) {
           case "size" => CalcIntType
           case _ => throw new MethodNotFoundError(attr.name, valType)
         }
-      case KaitaiStreamType =>
+      case KaitaiStreamType | OwnedKaitaiStreamType =>
         attr.name match {
           case "size" => CalcIntType
           case "pos" => CalcIntType
@@ -389,10 +389,20 @@ object TypeDetector {
                 CalcKaitaiStructType
               }
           }
-        case (_: UserType, _: ComplexDataType) => CalcKaitaiStructType
+        case (t1: StructType, t2: StructType) =>
+          if (t1.isOwning || t2.isOwning) {
+            KaitaiStructType
+          } else {
+            CalcKaitaiStructType
+          }
         case (t1: EnumType, t2: EnumType) =>
-          if (t1.enumSpec.get == t2.enumSpec.get) EnumType(t1.name, CalcIntType) else AnyType
-        case (_: ComplexDataType, _: UserType) => CalcKaitaiStructType
+          if (t1.enumSpec.get == t2.enumSpec.get) {
+            val t = EnumType(t1.name, CalcIntType)
+            t.enumSpec = t1.enumSpec
+            t
+          } else {
+            AnyType
+          }
         case (a1: ArrayType, a2: ArrayType) => CalcArrayType(combineTypesAndFail(a1.elType, a2.elType))
         case _ => AnyType
       }

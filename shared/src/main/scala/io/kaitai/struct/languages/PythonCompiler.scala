@@ -19,6 +19,7 @@ class PythonCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
     with AllocateIOLocalVar
     with FixedContentsUsingArrayByteLiteral
     with UniversalDoc
+    with SwitchIfOps
     with NoNeedForFullClassPath {
 
   import PythonCompiler._
@@ -103,7 +104,7 @@ class PythonCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
     }
   }
 
-  override def runRead(): Unit = {
+  override def runRead(name: List[String]): Unit = {
     out.puts("self._read()")
   }
 
@@ -368,10 +369,10 @@ class PythonCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
         s"$io.read_bytes_full()"
       case BytesTerminatedType(terminator, include, consume, eosError, _) =>
         s"$io.read_bytes_term($terminator, ${bool2Py(include)}, ${bool2Py(consume)}, ${bool2Py(eosError)})"
-      case BitsType1 =>
-        s"$io.read_bits_int(1) != 0"
-      case BitsType(width: Int) =>
-        s"$io.read_bits_int($width)"
+      case BitsType1(bitEndian) =>
+        s"$io.read_bits_int_${bitEndian.toSuffix}(1) != 0"
+      case BitsType(width: Int, bitEndian) =>
+        s"$io.read_bits_int_${bitEndian.toSuffix}($width)"
       case t: UserType =>
         val addParams = Utils.join(t.args.map((a) => translator.translate(a)), "", ", ", ", ")
         val addArgs = if (t.isOpaque) {
@@ -406,29 +407,36 @@ class PythonCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
   override def userTypeDebugRead(id: String, dataType: DataType, assignType: DataType): Unit =
     out.puts(s"$id._read()")
 
-  override def switchStart(id: Identifier, on: Ast.expr): Unit = {
+  override def switchStart(id: Identifier, on: Ast.expr): Unit = {}
+  override def switchCaseStart(condition: Ast.expr): Unit = {}
+  override def switchCaseEnd(): Unit = {}
+  override def switchElseStart(): Unit = {}
+  override def switchEnd(): Unit = {}
+
+  override def switchRequiresIfs(onType: DataType): Boolean = true
+  override def switchIfStart(id: Identifier, on: Ast.expr, onType: DataType): Unit = {
     out.puts(s"_on = ${expression(on)}")
   }
 
-  override def switchCaseFirstStart(condition: Ast.expr): Unit = {
+  override def switchIfCaseFirstStart(condition: Ast.expr): Unit = {
     out.puts(s"if _on == ${expression(condition)}:")
     out.inc
   }
 
-  override def switchCaseStart(condition: Ast.expr): Unit = {
+  override def switchIfCaseStart(condition: Ast.expr): Unit = {
     out.puts(s"elif _on == ${expression(condition)}:")
     out.inc
   }
 
-  override def switchCaseEnd(): Unit =
+  override def switchIfCaseEnd(): Unit =
     out.dec
 
-  override def switchElseStart(): Unit = {
+  override def switchIfElseStart(): Unit = {
     out.puts(s"else:")
     out.inc
   }
 
-  override def switchEnd(): Unit = {}
+  override def switchIfEnd(): Unit = {}
 
   override def instanceHeader(className: String, instName: InstanceIdentifier, dataType: DataType, isNullable: Boolean): Unit = {
     out.puts("@property")

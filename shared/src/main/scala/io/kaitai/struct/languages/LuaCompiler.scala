@@ -17,6 +17,7 @@ class LuaCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
     with SingleOutputFile
     with UniversalDoc
     with UniversalFooter
+    with SwitchIfOps
     with UpperCamelCaseClasses {
 
   import LuaCompiler._
@@ -99,7 +100,7 @@ class LuaCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
     out.puts
   }
 
-  override def runRead(): Unit =
+  override def runRead(name: List[String]): Unit =
     out.puts("self:_read()")
   override def runReadCalc(): Unit = {
     out.puts
@@ -337,10 +338,10 @@ class LuaCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
       s"$io:read_bytes_full()"
     case BytesTerminatedType(terminator, include, consume, eosError, _) =>
       s"$io:read_bytes_term($terminator, $include, $consume, $eosError)"
-    case BitsType1 =>
-      s"$io:read_bits_int(1)"
-    case BitsType(width: Int) =>
-      s"$io:read_bits_int($width)"
+    case BitsType1(bitEndian) =>
+      s"$io:read_bits_int_${bitEndian.toSuffix}(1)"
+    case BitsType(width: Int, bitEndian) =>
+      s"$io:read_bits_int_${bitEndian.toSuffix}($width)"
     case t: UserType =>
       val addParams = Utils.join(t.args.map((a) => translator.translate(a)), "", ", ", ", ")
       val addArgs = if (t.isOpaque) {
@@ -373,23 +374,36 @@ class LuaCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
   override def userTypeDebugRead(id: String, dataType: DataType, assignType: DataType): Unit =
     out.puts(s"$id:_read()")
 
-  override def switchStart(id: Identifier, on: Ast.expr): Unit =
+  override def switchStart(id: Identifier, on: Ast.expr): Unit = {}
+  override def switchCaseStart(condition: Ast.expr): Unit = {}
+  override def switchCaseEnd(): Unit = {}
+  override def switchElseStart(): Unit = {}
+  override def switchEnd(): Unit = {}
+
+  override def switchRequiresIfs(onType: DataType): Boolean = true
+
+  override def switchIfStart(id: Identifier, on: Ast.expr, onType: DataType): Unit =
     out.puts(s"local _on = ${expression(on)}")
-  override def switchCaseFirstStart(condition: Ast.expr): Unit = {
+
+  override def switchIfCaseFirstStart(condition: Ast.expr): Unit = {
     out.puts(s"if _on == ${expression(condition)} then")
     out.inc
   }
-  override def switchCaseStart(condition: Ast.expr): Unit = {
+
+  override def switchIfCaseStart(condition: Ast.expr): Unit = {
     out.puts(s"elseif _on == ${expression(condition)} then")
     out.inc
   }
-  override def switchCaseEnd(): Unit =
+
+  override def switchIfCaseEnd(): Unit =
     out.dec
-  override def switchElseStart(): Unit = {
+
+  override def switchIfElseStart(): Unit = {
     out.puts("else")
     out.inc
   }
-  override def switchEnd(): Unit =
+
+  override def switchIfEnd(): Unit =
     out.puts("end")
 
   override def allocateIO(varName: Identifier, rep: RepeatSpec): String = {
@@ -403,6 +417,31 @@ class LuaCompiler(typeProvider: ClassTypeProvider, config: RuntimeConfig)
   }
 
   override def ksErrorName(err: KSError): String = LuaCompiler.ksErrorName(err)
+
+  override def attrValidateExpr(
+    attrId: Identifier,
+    attrType: DataType,
+    checkExpr: Ast.expr,
+    errName: String,
+    errArgs: List[Ast.expr]
+  ): Unit = {
+    val errArgsCode = errArgs.map(translator.translate)
+    out.puts(s"if not(${translator.translate(checkExpr)}) then")
+    out.inc
+    val msg = errName match {
+      case "ValidationNotEqualError" => {
+        val (expected, actual) = (
+          errArgsCode.lift(0).getOrElse("[expected]"),
+          errArgsCode.lift(1).getOrElse("[actual]")
+        )
+        s""""not equal, expected " ..  $expected .. ", but got " .. $actual"""
+      }
+      case _ => "\"" + errName + "\""
+    }
+    out.puts(s"error($msg)")
+    out.dec
+    out.puts("end")
+  }
 }
 
 object LuaCompiler extends LanguageCompilerStatic
@@ -416,7 +455,7 @@ object LuaCompiler extends LanguageCompilerStatic
 
   override def kstructName: String = "KaitaiStruct"
   override def kstreamName: String = "KaitaiStream"
-  override def ksErrorName(err: KSError): String = ???
+  override def ksErrorName(err: KSError): String = err.name
 
   def types2class(name: List[String]): String =
     name.map(x => type2class(x)).mkString(".")
