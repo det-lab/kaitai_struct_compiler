@@ -12,27 +12,27 @@ import io.kaitai.struct.translators.{CppTranslator, TypeDetector}
 
 import scala.collection.mutable.ListBuffer
 
-//class AwkwardCompiler(val typeProvider: ClassTypeProvider, classSpecs: ClassSpecs, val topClass: ClassSpec, config: RuntimeConfig) 
-class AwkwardCompiler(val typeProvider: ClassTypeProvider, config: RuntimeConfig) 
+class AwkwardCompiler(
+  //override val typeProvider: ClassTypeProvider, 
+  typeProvider: ClassTypeProvider,
+  //classSpecs: ClassSpecs, 
+  //val topClass: ClassSpec, 
+  config: RuntimeConfig) 
   extends LanguageCompiler(typeProvider, config)
     with ObjectOrientedLanguage
     with AllocateAndStoreIO
     with FixedContentsUsingArrayByteLiteral
     with UniversalDoc
     with SwitchIfOps
-    with EveryReadIsExpression 
-  {
-  import AwkwardCompiler._
+    with EveryReadIsExpression {
 
-  // val importListSrc = new CppImportList
-  // val importListHdr = new CppImportList
+  import AwkwardCompiler._
 
   val importListSrc = new CppImportList
   val importListHdr = new CppImportList
 
-  val provider = new ClassTypeProvider(classSpecs, topClass)
-
-  override val translator: translators.CppTranslator = new CppTranslator(provider, importListSrc, importListHdr, config)
+  //val translator = new CppTranslator(provider, importListSrc, importListHdr, config)
+  override val translator: translators.CppTranslator = new CppTranslator(typeProvider, importListSrc, importListHdr, config)
 
   def parseExprBytes2(dataType: BytesType, io: String): String = { parseExprBytes(dataType, io) }
 
@@ -48,10 +48,10 @@ class AwkwardCompiler(val typeProvider: ClassTypeProvider, config: RuntimeConfig
         s"$io->read_bytes_full()"
       case BytesTerminatedType(terminator, include, consume, eosError, _) =>
         s"$io->read_bytes_term($terminator, $include, $consume, $eosError)"
-      case BitsType1 =>
-        s"$io->read_bits_int(1)"
-      case BitsType(width: Int) =>
-        s"$io->read_bits_int($width)"
+      case BitsType1(bitEndian) =>
+        s"$io->read_bits_int_${bitEndian.toSuffix}(1)"
+      case BitsType(width: Int, bitEndian) =>
+        s"$io->read_bits_int_${bitEndian.toSuffix}($width)"
       case t: UserType =>
         val addParams = Utils.join(t.args.map((a) => translator.translate(a)), "", ", ", ", ")
         val addArgs = if (t.isOpaque) {
@@ -167,7 +167,7 @@ class AwkwardCompiler(val typeProvider: ClassTypeProvider, config: RuntimeConfig
   override def readFooter(): Unit = {}
   override def readHeader(endian: Option[datatype.FixedEndian],isEmpty: Boolean): Unit = {}
   override def results(topClass: format.ClassSpec): Map[String,String] = { Map() }
-  override def runRead(): Unit = {}
+  override def runRead(name: List[String]): Unit = {}
   override def runReadCalc(): Unit = {}
   override def seek(io: String,pos: exprlang.Ast.expr): Unit = {}
   override def type2class(className: String): String = {""}
@@ -202,12 +202,16 @@ class AwkwardCompiler(val typeProvider: ClassTypeProvider, config: RuntimeConfig
 // extension of LanguageCompilerStatic
 object AwkwardCompiler extends LanguageCompilerStatic {
   // FIXME: Unused, should be probably separated from LanguageCompilerStatic
+  // override def getCompiler(
+  //   tp: ClassTypeProvider,
+  //   classSpecs: ClassSpecs, 
+  //   topClass: ClassSpec,
+  //   config: RuntimeConfig
+  // ): LanguageCompiler = new AwkwardCompiler(tp, classSpecs, topClass, config)
   override def getCompiler(
     tp: ClassTypeProvider,
-    //classSpecs: ClassSpecs, 
-    //topClass: ClassSpec,
     config: RuntimeConfig
-  ): LanguageCompiler = new AwkwardCompiler(tp, config) //classSpecs, topClass, config)
+  ): LanguageCompiler = new AwkwardCompiler(tp, config)
 
   def type2class(name: List[String]) = name.last
   def type2display(name: List[String]) = name.map(Utils.upperCamelCase).mkString("::")
@@ -233,7 +237,7 @@ object AwkwardCompiler extends LanguageCompilerStatic {
       case FloatMultiType(Width4, _) => "float"
       case FloatMultiType(Width8, _) => "double"
 
-      case BitsType(_) => "uint64_t"
+      case BitsType(_, _) => "uint64_t"
 
       case _: BooleanType => "bool"
       case CalcIntType => "int32_t"
@@ -324,7 +328,7 @@ object AwkwardCompiler extends LanguageCompilerStatic {
         s"str($bytesStr$comma$encoding)"
       case EnumType(name, basedOn) =>
         s"${dataTypeName(basedOn)}→${type2display(name)}"
-      case BitsType(width) => s"b$width"
+      case BitsType(width, bitEndian) => s"b$width"
       case _ => dataType.toString
     }
   }

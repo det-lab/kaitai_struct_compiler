@@ -22,8 +22,9 @@ class AwkwardClassCompiler(
 	extends ClassCompiler(classSpecs, topClass, config, AwkwardCompiler) {
 
   val awklang = lang.asInstanceOf[AwkwardCompiler]
-  
-  //val translator = new CppTranslator(provider, importListSrc, importListHdr, config)
+
+  override val provider = new ClassTypeProvider(classSpecs, topClass)
+   
   val links = ListBuffer[(String, String, String)]()
 
   def nowClass: ClassSpec = provider.nowClass

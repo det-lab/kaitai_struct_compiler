@@ -5,6 +5,7 @@ import io.kaitai.struct.languages._
 
 trait LanguageCompilerStatic {
   def getCompiler(tp: ClassTypeProvider, config: RuntimeConfig): LanguageCompiler
+  //def getCompiler2(tp: ClassTypeProvider, classSpecs, topClass, config: RuntimeConfig): LanguageCompiler
 }
 
 object LanguageCompilerStatic {
