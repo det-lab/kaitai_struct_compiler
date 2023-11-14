@@ -195,7 +195,6 @@ class AwkwardCompiler(
   val directedMap = MutableMap.empty[String, ListBuffer[String]]
   val instancesMap = MutableMap.empty[String, ListBuffer[String]]
   var nameList = List.empty[String]
-  var builderTypeDeclaration = ""
   var currId = ""
 
   sealed trait AccessMode
@@ -716,11 +715,21 @@ class AwkwardCompiler(
         case _: StrType | _: BytesType =>
           // Prints the C++ strings for appending the string data type to the Layoutbuilder.
           var builderName = s"${typeToId(nameList.last) + "A__Z" + idToStr(id)}"
-          if (rep == NoRepeat)
-            outSrc.puts(s"auto& ${builderName}_listoffsetbuilder = ${typeToId(nameList.last)}_builder.content<Field_${typeToId(nameList.last)}::${typeToId(nameList.last) + "A__Z" + idToStr(id)}>();")
+          if (isIndexedOption(typeToId(nameList.last) + "A__Z" + idToStr(id)) == true) {
+            if (rep == NoRepeat)
+              outSrc.puts(s"auto& ${builderName}_listoffsetbuilder = ${typeToId(nameList.last) + "A__Z" + idToStr(id)}_indexedoptionbuilder.content();")
+            else {
+              builderName = "sub_" + builderName
+              outSrc.puts(s"auto& ${builderName}_listoffsetbuilder = ${typeToId(nameList.last) + "A__Z" + idToStr(id)}_listoffsetbuilder.content();")
+            }
+          }
           else {
-            builderName = "sub_" + builderName
-            outSrc.puts(s"auto& ${builderName}_listoffsetbuilder = ${typeToId(nameList.last) + "A__Z" + idToStr(id)}_listoffsetbuilder.content();")
+            if (rep == NoRepeat)
+              outSrc.puts(s"auto& ${builderName}_listoffsetbuilder = ${typeToId(nameList.last)}_builder.content<Field_${typeToId(nameList.last)}::${typeToId(nameList.last) + "A__Z" + idToStr(id)}>();")
+            else {
+              builderName = "sub_" + builderName
+              outSrc.puts(s"auto& ${builderName}_listoffsetbuilder = ${typeToId(nameList.last) + "A__Z" + idToStr(id)}_listoffsetbuilder.content();")
+            }
           }
           outSrc.puts(s"${builderName}_listoffsetbuilder.begin_list();")
           outSrc.puts(s"""${builderName}_listoffsetbuilder.set_parameters("\\"__array__\\": \\"string\\"");""")
@@ -897,7 +906,11 @@ class AwkwardCompiler(
     outSrc.inc
     outSrc.puts("int i = 0;")
     // Initialize the ListOffsetBuilder for RepeatEos case and call `begin_list`
-    outSrc.puts(s"auto& ${typeToId(nameList.last) + "A__Z" + idToStr(id)}_listoffsetbuilder = ${typeToId(nameList.last)}_builder.content<Field_${typeToId(nameList.last)}::${typeToId(nameList.last) + "A__Z" + idToStr(id)}>();")
+    outSrc.puts(
+      s"auto& ${typeToId(nameList.last) + "A__Z" + idToStr(id)}_listoffsetbuilder = " +
+      s"${if (isIndexedOption(typeToId(nameList.last) + "A__Z" + idToStr(id)) == true) typeToId(nameList.last) + "A__Z" + idToStr(id) + "_indexedoptionbuilder.content();"
+      else typeToId(nameList.last) + "_builder.content<Field_" + typeToId(nameList.last) + "::" + typeToId(nameList.last) + "A__Z" + idToStr(id) + ">();"}"
+    )
     outSrc.puts(s"${typeToId(nameList.last) + "A__Z" + idToStr(id)}_listoffsetbuilder.begin_list();")
     outSrc.puts(s"while (!$io->is_eof()) {")
     outSrc.inc
@@ -921,7 +934,11 @@ class AwkwardCompiler(
     val lenVar = s"l_${idToStr(id)}"
     outSrc.puts(s"const int $lenVar = ${expression(repeatExpr)};")
     // Initialize the ListOffsetBuilder for RepeatExpr case and call `begin_list`
-    outSrc.puts(s"auto& ${typeToId(nameList.last) + "A__Z" + idToStr(id)}_listoffsetbuilder = ${typeToId(nameList.last)}_builder.content<Field_${typeToId(nameList.last)}::${typeToId(nameList.last) + "A__Z" + idToStr(id)}>();")
+    outSrc.puts(
+      s"auto& ${typeToId(nameList.last) + "A__Z" + idToStr(id)}_listoffsetbuilder = " +
+      s"${if (isIndexedOption(typeToId(nameList.last) + "A__Z" + idToStr(id)) == true) typeToId(nameList.last) + "A__Z" + idToStr(id) + "_indexedoptionbuilder.content();"
+      else typeToId(nameList.last) + "_builder.content<Field_" + typeToId(nameList.last) + "::" + typeToId(nameList.last) + "A__Z" + idToStr(id) + ">();"}"
+    )
     outSrc.puts(s"${typeToId(nameList.last) + "A__Z" + idToStr(id)}_listoffsetbuilder.begin_list();")
     outSrc.puts(s"for (int i = 0; i < $lenVar; i++) {")
     outSrc.inc
@@ -943,7 +960,11 @@ class AwkwardCompiler(
     outSrc.puts("int i = 0;")
     outSrc.puts(s"${kaitaiType2NativeType(dataType.asNonOwning())} ${translator.doName("_")};")
     // Initialize the ListOffsetBuilder for RepeatUntil case and call `begin_list`
-    outSrc.puts(s"auto& ${typeToId(nameList.last) + "A__Z" + idToStr(id)}_listoffsetbuilder = ${typeToId(nameList.last)}_builder.content<Field_${typeToId(nameList.last)}::${typeToId(nameList.last) + "A__Z" + idToStr(id)}>();")
+    outSrc.puts(
+      s"auto& ${typeToId(nameList.last) + "A__Z" + idToStr(id)}_listoffsetbuilder = " +
+      s"${if (isIndexedOption(typeToId(nameList.last) + "A__Z" + idToStr(id)) == true) typeToId(nameList.last) + "A__Z" + idToStr(id) + "_indexedoptionbuilder.content();"
+      else typeToId(nameList.last) + "_builder.content<Field_" + typeToId(nameList.last) + "::" + typeToId(nameList.last) + "A__Z" + idToStr(id) + ">();"}"
+    )
     outSrc.puts(s"${typeToId(nameList.last) + "A__Z" + idToStr(id)}_listoffsetbuilder.begin_list();")
     outSrc.puts("do {")
     outSrc.inc
@@ -1519,10 +1540,10 @@ class AwkwardCompiler(
     outHdr.puts
     outHdr.puts(s"std::map<std::string, $builderType*> builder_map;")
     outHdr.puts
-    outHdr.puts(s"$builderType* load(std::string file_path);")
+    outHdr.puts(s"inline $builderType* load(std::string file_path);")
     outHdr.puts
     outSrc.puts
-    outSrc.puts(s"$builderType* load(std::string file_path) {")
+    outSrc.puts(s"inline $builderType* load(std::string file_path) {")
     outSrc.inc
     outSrc.puts("std::ifstream infile(file_path, std::ifstream::binary);")
     outSrc.puts("kaitai::kstream ks(&infile);")
@@ -1548,9 +1569,9 @@ class AwkwardCompiler(
     outHdr.puts("};")
     outHdr.puts
 
-    outHdr.puts("Result fill(const char* file_path);")
+    outHdr.puts("inline Result fill(const char* file_path);")
     outHdr.puts
-    outSrc.puts("Result fill(const char* file_path) {")
+    outSrc.puts("inline Result fill(const char* file_path) {")
     outSrc.inc
     outSrc.puts("Result result;")
     outSrc.puts("std::string error_message;")
@@ -1573,63 +1594,63 @@ class AwkwardCompiler(
     outSrc.puts("}")
     outSrc.puts
 
-    outHdr.puts("const char* form(void* builder);")
+    outHdr.puts("inline const char* form(void* builder);")
     outHdr.puts
-    outSrc.puts("const char* form(void* builder) {")
+    outSrc.puts("inline const char* form(void* builder) {")
     outSrc.inc
     outSrc.puts(s"return strdup(reinterpret_cast<$builderType*>(builder)->form().c_str());")
     outSrc.dec
     outSrc.puts("}")
     outSrc.puts
 
-    outHdr.puts("int64_t length(void* builder);")
+    outHdr.puts("inline int64_t length(void* builder);")
     outHdr.puts
-    outSrc.puts("int64_t length(void* builder) {")
+    outSrc.puts("inline int64_t length(void* builder) {")
     outSrc.inc
     outSrc.puts(s"return reinterpret_cast<$builderType*>(builder)->length();")
     outSrc.dec
     outSrc.puts("}")
     outSrc.puts
 
-    outHdr.puts("int64_t num_buffers(void* builder);")
+    outHdr.puts("inline int64_t num_buffers(void* builder);")
     outHdr.puts
-    outSrc.puts("int64_t num_buffers(void* builder) {")
+    outSrc.puts("inline int64_t num_buffers(void* builder) {")
     outSrc.inc
     outSrc.puts(s"return awkward::num_buffers_helper(reinterpret_cast<$builderType*>(builder));")
     outSrc.dec
     outSrc.puts("}")
     outSrc.puts
 
-    outHdr.puts("const char* buffer_name(void* builder, int64_t index);")
+    outHdr.puts("inline const char* buffer_name(void* builder, int64_t index);")
     outHdr.puts
-    outSrc.puts("const char* buffer_name(void* builder, int64_t index) {")
+    outSrc.puts("inline const char* buffer_name(void* builder, int64_t index) {")
     outSrc.inc
     outSrc.puts(s"return awkward::buffer_name_helper(reinterpret_cast<$builderType*>(builder))[index].c_str();")
     outSrc.dec
     outSrc.puts("}")
     outSrc.puts
 
-    outHdr.puts("int64_t buffer_size(void* builder, int64_t index);")
+    outHdr.puts("inline int64_t buffer_size(void* builder, int64_t index);")
     outHdr.puts
-    outSrc.puts("int64_t buffer_size(void* builder, int64_t index) {")
+    outSrc.puts("inline int64_t buffer_size(void* builder, int64_t index) {")
     outSrc.inc
     outSrc.puts(s"return awkward::buffer_size_helper(reinterpret_cast<$builderType*>(builder))[index];")
     outSrc.dec
     outSrc.puts("}")
     outSrc.puts
 
-    outHdr.puts("void copy_into(const char* name, void* from_builder, void* to_buffer, int64_t index);")
+    outHdr.puts("inline void copy_into(const char* name, void* from_builder, void* to_buffer, int64_t index);")
     outHdr.puts
-    outSrc.puts("void copy_into(const char* name, void* from_builder, void* to_buffer, int64_t index) {")
+    outSrc.puts("inline void copy_into(const char* name, void* from_builder, void* to_buffer, int64_t index) {")
     outSrc.inc
     outSrc.puts(s"reinterpret_cast<$builderType*>(from_builder)->to_buffer(to_buffer, name);")
     outSrc.dec
     outSrc.puts("}")
     outSrc.puts
 
-    outHdr.puts("void deallocate(void* builder);")
+    outHdr.puts("inline void deallocate(void* builder);")
     outHdr.dec
-    outSrc.puts("void deallocate(void* builder) {")
+    outSrc.puts("inline void deallocate(void* builder) {")
     outSrc.inc
     outSrc.puts(s"reinterpret_cast<$builderType*>(builder)->clear();")
     outSrc.dec
