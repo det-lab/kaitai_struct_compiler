@@ -1,0 +1,1822 @@
+package io.kaitai.struct.languages
+
+import io.kaitai.struct.CppRuntimeConfig._
+import io.kaitai.struct._
+import io.kaitai.struct.datatype.DataType._
+import io.kaitai.struct.datatype._
+import io.kaitai.struct.exprlang.Ast
+import io.kaitai.struct.exprlang.Ast.expr
+import io.kaitai.struct.format._
+import io.kaitai.struct.languages.components._
+import io.kaitai.struct.translators.{AwkwardTranslator, TypeDetector}
+import scala.collection.immutable.Map
+import scala.collection.mutable.{Map => MutableMap, ListBuffer, Stack, Set}
+
+
+class AwkwardCompiler(
+  typeProvider: ClassTypeProvider,
+  config: RuntimeConfig
+) extends LanguageCompiler(typeProvider, config)
+    with ObjectOrientedLanguage
+    with AllocateAndStoreIO
+    with FixedContentsUsingArrayByteLiteral
+    with UniversalDoc
+    with SwitchIfOps
+    with EveryReadIsExpression {
+  import AwkwardCompiler._
+
+  val importListSrc = new CppImportList
+  val importListHdr = new CppImportList
+
+  override val translator = new AwkwardTranslator(typeProvider, importListSrc, importListHdr, config)
+  val outSrcHeader = new StringLanguageOutputWriter(indent)
+  val outHdrHeader = new StringLanguageOutputWriter(indent)
+  val outSrc = new StringLanguageOutputWriter(indent)
+  val outHdr = new StringLanguageOutputWriter(indent)
+  val outHdrAwkward = new StringLanguageOutputWriter(indent)
+  val outSrcAwkward = new StringLanguageOutputWriter(indent)
+
+  override def results(topClass: ClassSpec): Map[String, String] = {
+    val className = topClass.nameAsStr
+    Map(
+      outFileNameSource(className) -> (outSrcHeader.result + importListSrc.result + outSrcAwkward.result + outSrc.result),
+      outFileNameHeader(className) -> (outHdrHeader.result + importListHdr.result + outHdrAwkward.result + outHdr.result),
+    )
+  }
+
+/**
+  * Trait for generating the LayoutBuilder structure and builder
+  * strings for the given ksy file.
+  */
+  trait LayoutBuilder {
+    /**
+      * Prints the structure of the generated LayoutBuilder.
+      * @param indent the number of spaces to indent the structure.
+      * @param builderName name of the builder.
+      * @return strings containing the type of the builder, its contents and
+      * other strings associated with the builder.
+      */
+    def printBuilderStructure(indent: Int = 0, builderName: String): String
+  }
+
+  /**
+    * Generates the NumpyBuilder structure.
+    * @param dataType the type of data in NumpyBuilder.
+    */
+  case class NumpyBuilder(
+    dataType: String
+  ) extends LayoutBuilder {
+
+    /**
+      * Prints the structure of NumpyBuilder.
+      * @param indent the number of spaces to indent the structure.
+      * @param builderName name of the builder.
+      * @return string containing the primitive data type of NumpyBuilder buffer.
+      */
+    override def printBuilderStructure(indent: Int, builderName: String): String = {
+      s"NumpyBuilder<$dataType>"
+    }
+  }
+  /**
+    * Generates the ListOffsetBuilder structure.
+    * @param offsets the type of `offsets` buffer.
+    * @param content the type of ListOffsetBuilder content.
+    */
+  case class ListOffsetBuilder(
+    offsets: String,
+    content: LayoutBuilder
+  ) extends LayoutBuilder {
+
+    /**
+      * Prints the structure of ListOffsetBuilder.
+      * @param indent the number of spaces to indent the structure.
+      * @param builderName name of the builder.
+      * @return string containing the offsets type and the content of ListOffsetBuilder.
+      */
+    override def printBuilderStructure(indent: Int, builderName: String): String = {
+      var listOffsetContent = content.printBuilderStructure(indent, s"${builderName}")      
+      s"ListOffsetBuilder<$offsets, ${listOffsetContent}>"
+    }    
+  }
+
+  /**
+    * Generates the RecordBuilder structure and associated strings.
+    * @param fields the names of RecordBuilder fields.
+    * @param contents the types of RecordBuilder contents.
+    */
+  case class RecordBuilder(
+    fields: ListBuffer[String],
+    contents: ListBuffer[LayoutBuilder]
+  ) extends LayoutBuilder {
+
+    /**
+      * Prints the structure of RecordBuilder.
+      * @param indent the number of spaces to indent the structure.
+      * @param builderName name of the builder.
+      * @return strings containing the field names and the contents of RecordBuilder.
+      */
+    override def printBuilderStructure(indent: Int, builderName: String): String = {
+      UserDefinedMap(builderName)
+      val fieldStrings = fields.zip(contents).zipWithIndex.map { case ((field, content), i) =>
+        s"${"\t" * (indent + 2)}RecordField<Field_${builderName}::$field, ${content.printBuilderStructure(indent + 1, s"${field}")}>"
+      }
+      s"${if (indent == 0) "\nusing " + builderName.capitalize + "BuilderType =\n\t" else ""}" +
+      s"RecordBuilder<\n${fieldStrings.mkString(",\n")}\n${"\t" * (indent)}\t>"
+    }
+
+    /**
+      * Prints UserDefinedMap and enum strings
+      * @param indent the number of spaces to indent the structure.
+      * @param builderName name of the builder.
+      * @return strings containing user-defined field maps and enum strings with field ids.
+      */
+    def UserDefinedMap(builderName: String): Unit = {
+      val mapStrings = fields.zipWithIndex.map { case (field, i) =>
+        s"""{Field_${builderName}::$field, "$field"}"""
+      }
+      outHdrAwkward.puts(s"enum Field_${builderName} : std::size_t {${fields.mkString(", ")}};")
+      outSrcAwkward.puts
+      outSrcAwkward.puts(s"UserDefinedMap ${builderName}_fields_map({\n\t${mapStrings.mkString(",\n\t")}});")
+    }
+  }
+
+  /**
+    * Generates the IndexedOptionBuilder structure.
+    * @param index the type of `index` buffer.
+    * @param content the type of IndexedOptionBuilder content.
+    */
+  case class IndexedOptionBuilder(
+    index: String,
+    content: LayoutBuilder
+  ) extends LayoutBuilder {
+
+    /**
+      * Prints the structure of IndexedOptionBuilder.
+      * @param indent the number of spaces to indent the structure.
+      * @param builderName name of the builder.
+      * @return strings containing the index type and the content of IndexedOptionBuilder.
+      */
+    override def printBuilderStructure(indent: Int, builderName: String): String = {
+      var indexedOptionContent = content.printBuilderStructure(indent, s"${builderName}")      
+      s"IndexedOptionBuilder<$index, ${indexedOptionContent}>"
+    }
+  }
+
+  /**
+    * Generates the UnionBuilder structure.
+    * @param contents the types of UnionBuilder contents.
+    */
+  case class UnionBuilder(
+    contents: ListBuffer[LayoutBuilder]
+  ) extends LayoutBuilder {
+
+    val caseField = MutableMap.empty[Int, String]
+
+    /**
+      * Prints the structure of UnionBuilder.
+      * @param indent the number of spaces to indent the structure.
+      * @param builderName name of the builder.
+      * @return strings containing the contents of UnionBuilder.
+      */
+    override def printBuilderStructure(indent: Int, builderName: String): String = {
+      val unionContent = contents.zipWithIndex.map { case (content, index) =>
+        s"${"\t" * (indent + 2)}${content.printBuilderStructure(indent + 1, s"${caseField.getOrElse(index, builderName)}")}"
+      }
+      s"UnionBuilder<\n${unionContent.mkString(",\n")}\n${"\t" * (indent)}\t>"
+    }
+  }
+
+  var layoutBuilder =  RecordBuilder(ListBuffer(), ListBuffer())
+  val builderMap = MutableMap.empty[String, ClassSpec]
+  val typeToId = MutableMap.empty[String, String]
+  val typeToRepeat = MutableMap.empty[String, RepeatSpec]
+  val isIndexedOption = MutableMap.empty[String, Boolean]
+  val checkUnion = MutableMap.empty[String, String]
+  val directedMap = MutableMap.empty[String, ListBuffer[String]]
+  val instancesMap = MutableMap.empty[String, ListBuffer[String]]
+  var nameList = List.empty[String]
+  var currId = ""
+
+  sealed trait AccessMode
+  case object PrivateAccess extends AccessMode
+  case object PublicAccess extends AccessMode
+
+  var accessMode: AccessMode = PublicAccess
+
+  override def indent: String = "    "
+  def typeToFileName(topClassName: String): String = topClassName
+  def outFileNameSource(className: String): String = typeToFileName(className) + ".cpp"
+  def outFileNameHeader(className: String): String = typeToFileName(className) + ".h"
+
+  override def fileHeader(topClassName: String): Unit = {
+    outSrcHeader.puts(s"// $headerComment")
+    outSrcHeader.puts
+
+    importListSrc.addLocal(outFileNameHeader(topClassName))
+
+    if (config.cppConfig.usePragmaOnce) {
+      outHdrHeader.puts("#pragma once")
+    } else {
+      outHdrHeader.puts(s"#ifndef ${defineName(topClassName)}")
+      outHdrHeader.puts(s"#define ${defineName(topClassName)}")
+    }
+    outHdrHeader.puts
+    outHdrHeader.puts(s"// $headerComment")
+    outHdrHeader.puts
+
+    importListHdr.addKaitai("kaitai/kaitaistruct.h")
+    importListHdr.addSystem("stdint.h")
+    importListHdr.addSystem("fstream")
+    importListHdr.addLocal("awkward/LayoutBuilder.h")
+    importListHdr.addLocal("awkward/utils.h")
+
+    config.cppConfig.pointers match {
+      case SharedPointers | UniqueAndRawPointers =>
+        importListHdr.addSystem("memory")
+      case RawPointers =>
+        // no extra includes
+    }
+
+    // API compatibility check
+    val minVer = KSVersion.minimalRuntime.toInt
+    outHdr.puts
+    outHdr.puts(s"#if KAITAI_STRUCT_VERSION < ${minVer}L")
+    outHdr.puts(
+      "#error \"Incompatible Kaitai Struct Awkward API: version " +
+        KSVersion.minimalRuntime + " or later is required\""
+    )
+    outHdr.puts("#endif")
+
+    config.cppConfig.namespace.foreach { (namespace) =>
+      outSrc.puts(s"namespace $namespace {")
+      outSrc.inc
+      outHdr.puts(s"namespace $namespace {")
+      outHdr.inc
+    }
+    
+    // Defining LayoutBuilder
+    outHdrAwkward.puts
+    outHdrAwkward.puts("using UserDefinedMap = std::map<std::size_t, std::string>;");
+    outHdrAwkward.puts("template<class... BUILDERS>");
+    outHdrAwkward.puts("using RecordBuilder = awkward::LayoutBuilder::Record<UserDefinedMap, BUILDERS...>;");
+    outHdrAwkward.puts("template<std::size_t field_name, class BUILDER>");
+    outHdrAwkward.puts("using RecordField = awkward::LayoutBuilder::Field<field_name, BUILDER>;");
+    outHdrAwkward.puts("template<class PRIMITIVE, class BUILDER>");
+    outHdrAwkward.puts("using ListOffsetBuilder = awkward::LayoutBuilder::ListOffset<PRIMITIVE, BUILDER>;");
+    outHdrAwkward.puts("template<class PRIMITIVE>");
+    outHdrAwkward.puts("using NumpyBuilder = awkward::LayoutBuilder::Numpy<PRIMITIVE>;");
+    outHdrAwkward.puts("template<class PRIMITIVE, class BUILDER>");
+    outHdrAwkward.puts("using IndexedOptionBuilder = awkward::LayoutBuilder::IndexedOption<PRIMITIVE, BUILDER>;");
+    outHdrAwkward.puts("template<class... BUILDERS>");
+    outHdrAwkward.puts("using UnionBuilder = awkward::LayoutBuilder::Union<int8_t, uint32_t, BUILDERS...>;");
+    outHdrAwkward.puts
+
+    typeToId(topClassName) = topClassName
+    typeToRepeat(topClassName) = NoRepeat
+    isIndexedOption(topClassName) = false
+    checkUnion(topClassName) = ""
+    createBuilderStructure(layoutBuilder, topClassName)
+  }
+
+  override def fileFooter(topClassName: String): Unit = {
+    println(s"lb: $layoutBuilder")
+    outHdrAwkward.puts(s"${layoutBuilder.printBuilderStructure(0, s"${topClassName}")};")
+    outHdrAwkward.puts
+    builderTypeDeclaration(topClassName)
+    config.cppConfig.namespace.foreach { (_) =>
+      outSrc.dec
+      outSrc.puts("}")
+      outHdr.dec
+      outHdr.puts("}")
+    }
+
+    ctypesStrings(topClassName)
+
+    if (!config.cppConfig.usePragmaOnce) {
+      outHdr.puts
+      outHdr.puts(s"#endif  // ${defineName(topClassName)}")
+    }
+  }
+
+  override def opaqueClassDeclaration(classSpec: ClassSpec): Unit = {
+    classForwardDeclaration(classSpec.name)
+    importListHdr.addLocal(outFileNameHeader(classSpec.name.head))
+  }
+
+  override def classHeader(name: List[String]): Unit = {
+    val className = types2class(List(name.last))
+
+    val extraInherits = config.cppConfig.pointers match {
+      case RawPointers | UniqueAndRawPointers => ""
+      case SharedPointers => s", std::enable_shared_from_this<$className>"
+    }
+
+    outHdr.puts
+    outHdr.puts(s"class $className : public $kstructName$extraInherits {")
+    outHdr.inc
+    accessMode = PrivateAccess
+    ensureMode(PublicAccess)
+  }
+
+  override def classFooter(name: List[String]): Unit = {
+    outHdr.puts(s"${typeToId(name.last).capitalize}BuilderType ${typeToId(name.last)}_builder;")   
+    outHdr.dec
+    outHdr.puts("};")
+  }
+
+  override def classForwardDeclaration(name: List[String]): Unit = {
+    outHdr.puts(s"class ${types2class(name)};")
+  }
+
+  def importDataType(dt: DataType) = {
+    dt match {
+      case ut: UserType =>
+        val classSpec = ut.classSpec.get
+        if (classSpec.isTopLevel)
+          importListSrc.addLocal(outFileNameHeader(classSpec.name.head))
+      case _ => // no extra imports required
+    }
+  }
+
+  override def classConstructorHeader(name: List[String], parentType: DataType, rootClassName: List[String], isHybrid: Boolean, params: List[ParamDefSpec]): Unit = {
+    val (endianSuffixHdr, endianSuffixSrc)  = if (isHybrid) {
+      (", int p_is_le = -1", ", int p_is_le")
+    } else {
+      ("", "")
+    }
+
+    val paramsArg = Utils.join(params.map { case (p) =>
+      importDataType(p.dataType)
+      s"${kaitaiType2NativeType(p.dataType)} ${paramName(p.id)}"
+    }, "", ", ", ", ")
+
+    val classNameBrief = types2class(List(name.last))
+
+    // Parameter names
+    val pIo = paramName(IoIdentifier)
+    val pParent = paramName(ParentIdentifier)
+    val pRoot = paramName(RootIdentifier)
+
+    // Types
+    val tIo = kaitaiType2NativeType(KaitaiStreamType)
+    val tParent = kaitaiType2NativeType(parentType)
+    val tRoot = kaitaiType2NativeType(CalcUserType(rootClassName, None))
+
+    // Parent type might be declared somewhere else - in this case we need to include it
+    importDataType(parentType)
+
+    outHdr.puts
+    outHdr.puts(s"$classNameBrief($paramsArg" +
+      s"$tIo $pIo, " +
+      s"$tParent $pParent = $nullPtr, " +
+      s"$tRoot $pRoot = $nullPtr$endianSuffixHdr);"
+    )
+
+    val fieldId = getId(typeToId(name.last))
+    val unionIndex = checkUnion.getOrElse(typeToId(name.last), "")
+
+    outSrc.puts
+    // Adds the constructor initiliazation for each RecordBuilder type.
+    outSrc.puts(s"${types2class(name)}::$classNameBrief($paramsArg" +
+      s"$tIo $pIo, " +
+      s"$tParent $pParent, " +
+      s"$tRoot $pRoot$endianSuffixSrc) : $kstructName($pIo)" + 
+      s"${if (name.size > 1) ",\n\t" + typeToId(name.last) + "_builder(p__parent->" + typeToId(types2type(tParent)) +
+      s"_builder.content<Field_${typeToId(types2type(tParent))}::${fieldId}>()" +
+      s"${if (isIndexedOption(typeToId(name.last)) == true) ".content()" else ""}" +
+      s"${if (typeToRepeat(typeToId(name.last)) != NoRepeat) ".content()" else ""}" +
+      s"${if (unionIndex.contains("child")) ".content<" + unionIndex.split("_").last + ">()" else ""}) {" else " {"}"
+    )
+    outSrc.inc
+
+    // In shared pointers mode, this is required to be able to work with shared pointers to this
+    // in a constructor. This is obviously a hack and not a good practice.
+    // https://forum.libcinder.org/topic/solution-calling-shared-from-this-in-the-constructor
+    if (config.cppConfig.pointers == CppRuntimeConfig.SharedPointers) {
+      outSrc.puts(s"const auto weakPtrTrick = std::shared_ptr<$classNameBrief>(this, []($classNameBrief*){});")
+    }
+
+    handleAssignmentSimple(ParentIdentifier, pParent)
+    handleAssignmentSimple(RootIdentifier, if (name == rootClassName) {
+      config.cppConfig.pointers match {
+        case RawPointers | UniqueAndRawPointers => "this"
+        case SharedPointers => "shared_from_this()"
+      }
+    } else {
+      pRoot
+    })
+
+    typeProvider.nowClass.meta.endian match {
+      case Some(_: CalcEndian) | Some(InheritedEndian) =>
+        ensureMode(PrivateAccess)
+        outHdr.puts("int m__is_le;")
+        handleAssignmentSimple(EndianIdentifier, if (isHybrid) "p_is_le" else "-1")
+        ensureMode(PublicAccess)
+      case _ =>
+        // no _is_le variable
+    }
+
+    // Store parameters passed to us
+    params.foreach((p) => handleAssignmentSimple(p.id, paramName(p.id)))
+    nameList = name
+  }
+
+  override def classConstructorFooter: Unit = {
+    outSrc.dec
+    outSrc.puts("}")
+  }
+
+  override def classDestructorHeader(name: List[String], parentType: DataType, topClassName: List[String]): Unit = {
+    ensureMode(PrivateAccess)
+    outHdr.puts("void _clean_up();")
+    ensureMode(PublicAccess)
+    outHdr.puts(s"~${types2class(List(name.last))}();")
+
+    outSrc.puts
+    outSrc.puts(s"${types2class(name)}::~${types2class(List(name.last))}() {")
+    outSrc.inc
+    outSrc.puts("_clean_up();")
+    outSrc.dec
+    outSrc.puts("}")
+    outSrc.puts
+    outSrc.puts(s"void ${types2class(name)}::_clean_up() {")
+    outSrc.inc
+  }
+
+  override def classDestructorFooter = classConstructorFooter
+
+  override def runRead(name: List[String]): Unit = {
+    outSrc.puts
+    outSrc.puts(s"${typeToId(name.last)}_builder.set_fields(${typeToId(name.last)}_fields_map);")
+    val wrapToTryCatch = (config.cppConfig.pointers == CppRuntimeConfig.RawPointers);
+    if (wrapToTryCatch) {
+      outSrc.puts
+      outSrc.puts("try {")
+      outSrc.inc
+    }
+    outSrc.puts("_read();")
+    if (wrapToTryCatch) {
+      outSrc.dec
+      outSrc.puts("} catch(...) {")
+      outSrc.inc
+      outSrc.puts("_clean_up();")
+      outSrc.puts("throw;")
+      outSrc.dec
+      outSrc.puts("}")
+    }
+  }
+
+  override def runReadCalc(): Unit = {
+    outSrc.puts
+    outSrc.puts("if (m__is_le == -1) {")
+    outSrc.inc
+    importListSrc.addKaitai("kaitai/exceptions.h")
+    outSrc.puts(s"throw ${ksErrorName(UndecidedEndiannessError)}" +
+      "(\"" + typeProvider.nowClass.path.mkString("/", "/", "") + "\");")
+    outSrc.dec
+    outSrc.puts("} else if (m__is_le == 1) {")
+    outSrc.inc
+    outSrc.puts("_read_le();")
+    outSrc.dec
+    outSrc.puts("} else {")
+    outSrc.inc
+    outSrc.puts("_read_be();")
+    outSrc.dec
+    outSrc.puts("}")
+  }
+
+  override def readHeader(endian: Option[FixedEndian], isEmpty: Boolean): Unit = {
+    val suffix = endian match {
+      case Some(e) => s"_${e.toSuffix}"
+      case None => ""
+    }
+
+    ensureMode(if (config.autoRead) PrivateAccess else PublicAccess)
+
+    outHdr.puts(s"void _read$suffix();")
+    outSrc.puts
+    outSrc.puts(s"void ${types2class(typeProvider.nowClass.name)}::_read$suffix() {")
+    outSrc.inc
+  }
+
+  override def readFooter(): Unit = {
+    outSrc.dec
+    outSrc.puts("}")
+  }
+
+  override def attributeDeclaration(attrName: Identifier, attrType: DataType, isNullable: Boolean): Unit = {
+    ensureMode(PrivateAccess)
+    outHdr.puts(s"${kaitaiType2NativeType(attrType)} ${privateMemberName(attrName)};")
+    declareNullFlag(attrName, isNullable)
+  }
+
+  def ensureMode(newMode: AccessMode): Unit = {
+    if (accessMode != newMode) {
+      outHdr.dec
+      outHdr.puts
+      outHdr.puts(newMode match {
+        case PrivateAccess => "private:"
+        case PublicAccess => "public:"
+      })
+      outHdr.inc
+      accessMode = newMode
+    }
+  }
+
+  override def attributeReader(attrName: Identifier, attrType: DataType, isNullable: Boolean): Unit = {
+    ensureMode(PublicAccess)
+    outHdr.puts(s"${kaitaiType2NativeType(attrType.asNonOwning())} ${publicMemberName(attrName)}() const { return ${nonOwningPointer(attrName, attrType)}; }")
+  }
+
+  override def universalDoc(doc: DocSpec): Unit = {
+    // All docstrings would be for public stuff, so it's safe to start it here
+    ensureMode(PublicAccess)
+
+    outHdr.puts
+    outHdr.puts( "/**")
+
+    doc.summary.foreach(docStr => outHdr.putsLines(" * ", docStr))
+
+    doc.ref.foreach {
+      case TextRef(text) =>
+        outHdr.putsLines(" * ", s"\\sa $text")
+      case UrlRef(url, text) =>
+        outHdr.putsLines(" * ", s"\\sa $url $text")
+    }
+
+    outHdr.puts( " */")
+  }
+
+  override def attrInit(attr: AttrLikeSpec): Unit = {
+    attr.dataTypeComposite match {
+      case _: UserType | _: ArrayTypeInStream | OwnedKaitaiStreamType =>
+        // data type will be pointer to user type, std::vector or stream, so we need to init it
+        outSrc.puts(s"${privateMemberName(attr.id)} = $nullPtr;")
+      case _ =>
+        // no init required for value types
+    }
+  }
+
+  override def attrDestructor(attr: AttrLikeSpec, id: Identifier): Unit = {
+    val checkLazy = if (attr.isLazy) {
+      Some(calculatedFlagForName(id))
+    } else {
+      None
+    }
+
+    val checkNull = if (attr.isNullableSwitchRaw) {
+      Some(s"!${nullFlagForName(id)}")
+    } else {
+      None
+    }
+
+    val checks: List[String] = List(checkLazy, checkNull).flatten
+
+    if (checks.nonEmpty) {
+      outSrc.puts(s"if (${checks.mkString(" && ")}) {")
+      outSrc.inc
+    }
+
+    (ExtraAttrs.forAttr(attr, this) ++ List(attr)).foreach { (attr) =>
+      val innerType = attr.dataType match {
+        case st: SwitchType => combineSwitchType(st)
+        case t => t
+      }
+      destructMember(attr.id, innerType, attr.isArray)
+    }
+
+    if (checks.nonEmpty) {
+      outSrc.dec
+      outSrc.puts("}")
+    }
+  }
+
+  def destructMember(id: Identifier, innerType: DataType, isArray: Boolean): Unit = {
+    if (config.cppConfig.pointers != CppRuntimeConfig.RawPointers)
+      return
+
+    val ptr = privateMemberName(id)
+    val innerNeedsDestruct = needsDestruction(innerType)
+
+    if (!isArray && !innerNeedsDestruct)
+      return
+
+    outSrc.puts(s"if ($ptr) {")
+    outSrc.inc
+
+    if (isArray && innerNeedsDestruct)
+      destructVector(kaitaiType2NativeType(innerType), ptr)
+
+    outSrc.puts(s"delete $ptr; $ptr = $nullPtr;")
+    outSrc.dec
+    outSrc.puts("}")
+  }
+
+  def needsDestruction(t: DataType): Boolean = t match {
+    case _: UserType | _: ArrayTypeInStream | KaitaiStructType | AnyType | OwnedKaitaiStreamType => true
+    case _ => false
+  }
+
+  /**
+    * Generates std::vector contents destruction loop.
+    * @param elType element type, i.e. XXX in `std::vector&lt;XXX&gt;`
+    * @param arrVar variable name that holds pointer to std::vector
+    */
+  def destructVector(elType: String, arrVar: String): Unit = {
+    outSrc.puts(s"for (std::vector<$elType>::iterator it = $arrVar->begin(); it != $arrVar->end(); ++it) {")
+    outSrc.inc
+    outSrc.puts("delete *it;")
+    outSrc.dec
+    outSrc.puts("}")
+  }
+
+  override def attrParseHybrid(leProc: () => Unit, beProc: () => Unit): Unit = {
+    outSrc.puts("if (m__is_le == 1) {")
+    outSrc.inc
+    leProc()
+    outSrc.dec
+    outSrc.puts("} else {")
+    outSrc.inc
+    beProc()
+    outSrc.dec
+    outSrc.puts("}")
+  }
+
+  override def attrFixedContentsParse(attrName: Identifier, contents: String): Unit =
+    outSrc.puts(s"${privateMemberName(attrName)} = $normalIO->ensure_fixed_contents($contents);")
+
+  override def attrParse2(
+    id: Identifier,
+    dataType: DataType,
+    io: String,
+    rep: RepeatSpec,
+    isRaw: Boolean,
+    defEndian: Option[FixedEndian],
+    assignTypeOpt: Option[DataType] = None
+  ): Unit = {
+    super.attrParse2(id, dataType, io, rep, isRaw, defEndian, assignTypeOpt)
+    currId = idToStr(id)
+    if (!privateMemberName(id).contains("m__raw")) {
+      // Match case for printing the LayoutBuilder filling C++ strings in the _read() method of
+      // each class based on the encountered data type and other conditions.
+      dataType match {
+        case Int1Type(_) | IntMultiType(_, _, _) | FloatMultiType(_, _) | BitsType(_, _) |
+          _: BooleanType | CalcIntType | CalcFloatType  =>
+          // Prints the C++ strings for appending the primitive data type to the Layoutbuilder.
+          if (rep == NoRepeat)
+            outSrc.puts(s"auto& ${typeToId(nameList.last) + "A__Z" + idToStr(id)}_builder = ${typeToId(nameList.last)}_builder.content<Field_${typeToId(nameList.last)}::${typeToId(nameList.last) + "A__Z" + idToStr(id)}>();")
+          else
+            outSrc.puts(s"auto& ${typeToId(nameList.last) + "A__Z" + idToStr(id)}_builder = ${typeToId(nameList.last) + "A__Z" + idToStr(id)}_listoffsetbuilder.content();")
+          outSrc.puts(s"${typeToId(nameList.last) + "A__Z" + idToStr(id)}_builder.append(${getRawIdExpr(id, rep)});")
+        case _: StrType | _: BytesType =>
+          // Prints the C++ strings for appending the string data type to the Layoutbuilder.
+          var builderName = s"${typeToId(nameList.last) + "A__Z" + idToStr(id)}"
+          if (isIndexedOption(typeToId(nameList.last) + "A__Z" + idToStr(id)) == true) {
+            if (rep == NoRepeat)
+              outSrc.puts(s"auto& ${builderName}_listoffsetbuilder = ${typeToId(nameList.last) + "A__Z" + idToStr(id)}_indexedoptionbuilder.content();")
+            else {
+              builderName = "sub_" + builderName
+              outSrc.puts(s"auto& ${builderName}_listoffsetbuilder = ${typeToId(nameList.last) + "A__Z" + idToStr(id)}_listoffsetbuilder.content();")
+            }
+          }
+          else {
+            if (rep == NoRepeat)
+              outSrc.puts(s"auto& ${builderName}_listoffsetbuilder = ${typeToId(nameList.last)}_builder.content<Field_${typeToId(nameList.last)}::${typeToId(nameList.last) + "A__Z" + idToStr(id)}>();")
+            else {
+              builderName = "sub_" + builderName
+              outSrc.puts(s"auto& ${builderName}_listoffsetbuilder = ${typeToId(nameList.last) + "A__Z" + idToStr(id)}_listoffsetbuilder.content();")
+            }
+          }
+          outSrc.puts(s"${builderName}_listoffsetbuilder.begin_list();")
+          outSrc.puts(s"""${builderName}_listoffsetbuilder.set_parameters("\\"__array__\\": \\"string\\"");""")
+          outSrc.puts(s"auto& ${typeToId(nameList.last) + "A__Z" + idToStr(id)}_builder = ${builderName}_listoffsetbuilder.content();")
+          outSrc.puts(s"""${typeToId(nameList.last) + "A__Z" + idToStr(id)}_builder.set_parameters("\\"__array__\\" : \\"char\\"");""")
+          outSrc.puts(s"for (int i = 0; i < ${getRawIdExpr(id, rep)}.length(); i++) {")
+          outSrc.inc
+          outSrc.puts(s"${typeToId(nameList.last) + "A__Z" + idToStr(id)}_builder.append(${getRawIdExpr(id, rep)}[i]);")
+          outSrc.dec
+          outSrc.puts("}")
+          outSrc.puts(s"${builderName}_listoffsetbuilder.end_list();")
+        case userType: UserType =>
+          // Prints the C++ string to append the tags and index in the union builder buffers if a given
+          // userType is a child of a UnionBuilder.
+          if (checkUnion.getOrElse(typeToId(userType.name.head), "").contains("child_")) {
+            outSrc.puts(s"${typeToId(nameList.last) + "A__Z" + idToStr(id)}_unionbuilder.append_content<${checkUnion(typeToId(userType.name.head)).split("_").last}>();")
+          }
+        case _ => // do nothing
+      }
+    }
+  }
+
+  override def attrProcess(proc: ProcessExpr, varSrc: Identifier, varDest: Identifier, rep: RepeatSpec): Unit = {
+    val srcExpr = getRawIdExpr(varSrc, rep)
+
+    val expr = proc match {
+      case ProcessXor(xorValue) =>
+        val procName = translator.detectType(xorValue) match {
+          case _: IntType => "process_xor_one"
+          case _: BytesType => "process_xor_many"
+          case _ => ""
+        }
+        s"$kstreamName::$procName($srcExpr, ${expression(xorValue)})"
+      case ProcessZlib =>
+        s"$kstreamName::process_zlib($srcExpr)"
+      case ProcessRotate(isLeft, rotValue) =>
+        val expr = if (isLeft) {
+          expression(rotValue)
+        } else {
+          s"8 - (${expression(rotValue)})"
+        }
+        s"$kstreamName::process_rotate_left($srcExpr, $expr)"
+      case ProcessCustom(name, args) =>
+        val procClass = name.map((x) => type2class(x)).mkString("::")
+        val procName = s"_process_${idToStr(varSrc)}"
+
+        importListSrc.addLocal(outFileNameHeader(name.last))
+
+        val argList = args.map(expression).mkString(", ")
+        var argListInParens = if (argList.nonEmpty) s"($argList)" else ""
+        outSrc.puts(s"$procClass $procName$argListInParens;")
+        s"$procName.decode($srcExpr)"
+    }
+    handleAssignment(varDest, expr, rep, false)
+  }
+
+  override def allocateIO(id: Identifier, rep: RepeatSpec): String = {
+    val memberName = privateMemberName(id)
+    val ioId = IoStorageIdentifier(id)
+
+    val args = rep match {
+      case RepeatUntil(_) => translator.doName(Identifier.ITERATOR2)
+      case _ => getRawIdExpr(id, rep)
+    }
+
+    val newStreamRaw = s"new $kstreamName($args)"
+
+    val ioName = rep match {
+      case NoRepeat =>
+        val newStream = (
+          if (config.cppConfig.pointers != CppRuntimeConfig.RawPointers)
+            s"${kaitaiType2NativeType(OwnedKaitaiStreamType)}($newStreamRaw)"
+          else
+            newStreamRaw
+        )
+        outSrc.puts(s"${privateMemberName(ioId)} = $newStream;")
+        config.cppConfig.pointers match {
+          case RawPointers =>
+            privateMemberName(ioId)
+          case UniqueAndRawPointers =>
+            s"${privateMemberName(ioId)}.get()"
+          case _ => ""
+        }
+      case _ =>
+        val localIO = s"io_${idToStr(id)}"
+        outSrc.puts(s"$kstreamName* $localIO = $newStreamRaw;")
+        if (config.cppConfig.pointers == CppRuntimeConfig.UniqueAndRawPointers) {
+          outSrc.puts(s"${privateMemberName(ioId)}->emplace_back($localIO);")
+        } else {
+          outSrc.puts(s"${privateMemberName(ioId)}->push_back($localIO);")
+        }
+        localIO
+    }
+
+    ioName
+  }
+
+  def getRawIdExpr(varName: Identifier, rep: RepeatSpec): String = {
+    val memberName = privateMemberName(varName)
+    rep match {
+      case NoRepeat => memberName
+      case _ => s"$memberName->at($memberName->size() - 1)"
+    }
+  }
+
+  override def useIO(ioEx: Ast.expr): String = {
+    outSrc.puts(s"$kstreamName *io = ${expression(ioEx)};")
+    "io"
+  }
+
+  override def pushPos(io: String): Unit =
+    outSrc.puts(s"std::streampos _pos = $io->pos();")
+
+  override def seek(io: String, pos: Ast.expr): Unit =
+    outSrc.puts(s"$io->seek(${expression(pos)});")
+
+  override def popPos(io: String): Unit =
+    outSrc.puts(s"$io->seek(_pos);")
+
+  override def alignToByte(io: String): Unit =
+    outSrc.puts(s"$io->align_to_byte();")
+
+  override def instanceClear(instName: InstanceIdentifier): Unit =
+    outSrc.puts(s"${calculatedFlagForName(instName)} = false;")
+
+  override def instanceSetCalculated(instName: InstanceIdentifier): Unit =
+    outSrc.puts(s"${calculatedFlagForName(instName)} = true;")
+
+  override def condIfSetNull(instName: Identifier): Unit = {
+    outSrc.puts(s"${nullFlagForName(instName)} = true;")
+    // Initialize the IndexedOptionBuilder
+    outSrc.puts(s"auto& ${typeToId(nameList.last) + "A__Z" + idToStr(instName)}_indexedoptionbuilder = ${typeToId(nameList.last)}_builder.content<Field_${typeToId(nameList.last)}::${typeToId(nameList.last) + "A__Z" + idToStr(instName)}>();")
+  }
+
+  override def condIfSetNonNull(instName: Identifier): Unit =
+    outSrc.puts(s"${nullFlagForName(instName)} = false;")
+
+  override def condIfHeader(expr: Ast.expr): Unit = {
+    outSrc.puts(s"if (${expression(expr)}) {")
+    outSrc.inc
+  }
+
+  override def condIfFooter(expr: Ast.expr): Unit = {
+    // Appends valid index to the IndexedOptionBuilder
+    outSrc.puts(s"${typeToId(nameList.last) + "A__Z" + currId}_indexedoptionbuilder.append_valid();")
+    outSrc.dec
+    outSrc.puts("}")
+    outSrc.puts("else {")
+    outSrc.inc
+    // Appends invalid index to the IndexedOptionBuilder
+    outSrc.puts(s"${typeToId(nameList.last) + "A__Z" + currId}_indexedoptionbuilder.append_invalid();")
+    outSrc.dec
+    outSrc.puts("}") 
+    outSrc.puts
+  }
+
+  override def condRepeatInitAttr(id: Identifier, dataType: DataType): Unit = {
+    importListHdr.addSystem("vector")
+
+    outSrc.puts(s"${privateMemberName(id)} = ${newVector(dataType)};")
+  }
+
+  override def condRepeatEosHeader(id: Identifier, io: String, dataType: DataType): Unit = {
+    outSrc.puts("{")
+    outSrc.inc
+    outSrc.puts("int i = 0;")
+    // Initialize the ListOffsetBuilder for RepeatEos case and call `begin_list`
+    outSrc.puts(
+      s"auto& ${typeToId(nameList.last) + "A__Z" + idToStr(id)}_listoffsetbuilder = " +
+      s"${if (isIndexedOption(typeToId(nameList.last) + "A__Z" + idToStr(id)) == true) typeToId(nameList.last) + "A__Z" + idToStr(id) + "_indexedoptionbuilder.content();"
+      else typeToId(nameList.last) + "_builder.content<Field_" + typeToId(nameList.last) + "::" + typeToId(nameList.last) + "A__Z" + idToStr(id) + ">();"}"
+    )
+    outSrc.puts(s"${typeToId(nameList.last) + "A__Z" + idToStr(id)}_listoffsetbuilder.begin_list();")
+    outSrc.puts(s"while (!$io->is_eof()) {")
+    outSrc.inc
+  }
+
+  override def handleAssignmentRepeatEos(id: Identifier, expr: String): Unit = {
+    outSrc.puts(s"${privateMemberName(id)}->push_back(${stdMoveWrap(expr)});")
+  }
+
+  override def condRepeatEosFooter: Unit = {
+    outSrc.puts("i++;")
+    outSrc.dec
+    outSrc.puts("}")
+    // Calls `end_list` on the ListOffsetBuilder for RepeatEos case
+    outSrc.puts(s"${typeToId(nameList.last) + "A__Z" + currId}_listoffsetbuilder.end_list();")
+    outSrc.dec
+    outSrc.puts("}")
+  }
+
+  override def condRepeatExprHeader(id: Identifier, io: String, dataType: DataType, repeatExpr: Ast.expr): Unit = {
+    val lenVar = s"l_${idToStr(id)}"
+    outSrc.puts(s"const int $lenVar = ${expression(repeatExpr)};")
+    // Initialize the ListOffsetBuilder for RepeatExpr case and call `begin_list`
+    outSrc.puts(
+      s"auto& ${typeToId(nameList.last) + "A__Z" + idToStr(id)}_listoffsetbuilder = " +
+      s"${if (isIndexedOption(typeToId(nameList.last) + "A__Z" + idToStr(id)) == true) typeToId(nameList.last) + "A__Z" + idToStr(id) + "_indexedoptionbuilder.content();"
+      else typeToId(nameList.last) + "_builder.content<Field_" + typeToId(nameList.last) + "::" + typeToId(nameList.last) + "A__Z" + idToStr(id) + ">();"}"
+    )
+    outSrc.puts(s"${typeToId(nameList.last) + "A__Z" + idToStr(id)}_listoffsetbuilder.begin_list();")
+    outSrc.puts(s"for (int i = 0; i < $lenVar; i++) {")
+    outSrc.inc
+  }
+
+  override def handleAssignmentRepeatExpr(id: Identifier, expr: String): Unit =
+    handleAssignmentRepeatEos(id, expr)
+
+  override def condRepeatExprFooter: Unit = {
+    outSrc.dec
+    outSrc.puts("}")
+    // Calls `end_list` on the ListOffsetBuilder for RepeatExpr case
+    outSrc.puts(s"${typeToId(nameList.last) + "A__Z" + currId}_listoffsetbuilder.end_list();")
+  }
+
+  override def condRepeatUntilHeader(id: Identifier, io: String, dataType: DataType, untilExpr: expr): Unit = {
+    outSrc.puts("{")
+    outSrc.inc
+    outSrc.puts("int i = 0;")
+    outSrc.puts(s"${kaitaiType2NativeType(dataType.asNonOwning())} ${translator.doName("_")};")
+    // Initialize the ListOffsetBuilder for RepeatUntil case and call `begin_list`
+    outSrc.puts(
+      s"auto& ${typeToId(nameList.last) + "A__Z" + idToStr(id)}_listoffsetbuilder = " +
+      s"${if (isIndexedOption(typeToId(nameList.last) + "A__Z" + idToStr(id)) == true) typeToId(nameList.last) + "A__Z" + idToStr(id) + "_indexedoptionbuilder.content();"
+      else typeToId(nameList.last) + "_builder.content<Field_" + typeToId(nameList.last) + "::" + typeToId(nameList.last) + "A__Z" + idToStr(id) + ">();"}"
+    )
+    outSrc.puts(s"${typeToId(nameList.last) + "A__Z" + idToStr(id)}_listoffsetbuilder.begin_list();")
+    outSrc.puts("do {")
+    outSrc.inc
+  }
+
+  private val ReStdUniquePtr = "^std::unique_ptr<(.*?)>\\((.*?)\\)$".r
+
+  override def handleAssignmentRepeatUntil(id: Identifier, expr: String, isRaw: Boolean): Unit = {
+    val (typeDecl, tempVar) = if (isRaw) {
+      ("std::string ", translator.doName(Identifier.ITERATOR2))
+    } else {
+      ("", translator.doName(Identifier.ITERATOR))
+    }
+
+    val (wrappedTempVar, rawPtrExpr) = if (config.cppConfig.pointers == UniqueAndRawPointers) {
+      expr match {
+        case ReStdUniquePtr(cppClass, innerExpr) =>
+          (s"std::move(std::unique_ptr<$cppClass>($tempVar))", innerExpr)
+        case _ =>
+          (tempVar, expr)
+      }
+    } else {
+      (tempVar, expr)
+    }
+
+    outSrc.puts(s"$typeDecl$tempVar = $rawPtrExpr;")
+
+    outSrc.puts(s"${privateMemberName(id)}->push_back($wrappedTempVar);")
+  }
+
+  override def condRepeatUntilFooter(id: Identifier, io: String, dataType: DataType, untilExpr: expr): Unit = {
+    typeProvider._currentIteratorType = Some(dataType)
+    outSrc.puts("i++;")
+    outSrc.dec
+    outSrc.puts(s"} while (!(${expression(untilExpr)}));")
+    // Calls `end_list` on the ListOffsetBuilder for RepeatUntil case
+    outSrc.puts(s"${typeToId(nameList.last) + "A__Z" + currId}_listoffsetbuilder.end_list();")
+    outSrc.dec
+    outSrc.puts("}")
+  }
+
+  override def handleAssignmentSimple(id: Identifier, expr: String): Unit = {
+    outSrc.puts(s"${privateMemberName(id)} = $expr;")
+  }
+
+  override def handleAssignmentTempVar(dataType: DataType, id: String, expr: String): Unit =
+    outSrc.puts(s"${kaitaiType2NativeType(dataType)} $id = $expr;")
+
+  override def blockScopeHeader: Unit = {
+    outSrc.puts("{")
+    outSrc.inc
+  }
+  override def blockScopeFooter: Unit = {
+    outSrc.dec
+    outSrc.puts("}")
+  }
+
+  override def parseExpr(dataType: DataType, assignType: DataType, io: String, defEndian: Option[FixedEndian]): String = {
+    dataType match {
+      case t: ReadableType =>
+        s"$io->read_${t.apiCall(defEndian)}()"
+      case blt: BytesLimitType =>
+        s"$io->read_bytes(${expression(blt.size)})"
+      case _: BytesEosType =>
+        s"$io->read_bytes_full()"
+      case BytesTerminatedType(terminator, include, consume, eosError, _) =>
+        s"$io->read_bytes_term($terminator, $include, $consume, $eosError)"
+      case BitsType1(bitEndian) =>
+        s"$io->read_bits_int_${bitEndian.toSuffix}(1)"
+      case BitsType(width: Int, bitEndian) =>
+        s"$io->read_bits_int_${bitEndian.toSuffix}($width)"
+      case t: UserType =>
+        val addParams = Utils.join(t.args.map((a) => translator.translate(a)), "", ", ", ", ")
+        val addArgs = if (t.isOpaque) {
+          ""
+        } else {
+          val parent = t.forcedParent match {
+            case Some(USER_TYPE_NO_PARENT) => nullPtr
+            case Some(fp) => translator.translate(fp)
+            case None =>
+              config.cppConfig.pointers match {
+                case RawPointers | UniqueAndRawPointers => "this"
+                case SharedPointers => s"shared_from_this()"
+              }
+          }
+          val addEndian = t.classSpec.get.meta.endian match {
+            case Some(InheritedEndian) => ", m__is_le"
+            case _ => ""
+          }
+          s", $parent, ${privateMemberName(RootIdentifier)}$addEndian"
+        }
+        config.cppConfig.pointers match {
+          case RawPointers =>
+            s"new ${types2class(t.name)}($addParams$io$addArgs)"
+          case SharedPointers =>
+            s"std::make_shared<${types2class(t.name)}>($addParams$io$addArgs)"
+          case UniqueAndRawPointers =>
+            // C++14
+            //s"std::make_unique<${types2class(t.name)}>($addParams$io$addArgs)"
+            s"std::unique_ptr<${types2class(t.name)}>(new ${types2class(t.name)}($addParams$io$addArgs))"
+        }
+      case _ => ""
+    }
+  }
+
+  def newVector(elType: DataType): String = {
+    val cppElType = kaitaiType2NativeType(elType)
+    config.cppConfig.pointers match {
+      case RawPointers =>
+        s"new std::vector<$cppElType>()"
+      case UniqueAndRawPointers =>
+        s"std::unique_ptr<std::vector<$cppElType>>(new std::vector<$cppElType>())"
+        // TODO: C++14 with std::make_unique
+      case _ => ""
+    }
+  }
+
+  override def bytesPadTermExpr(expr0: String, padRight: Option[Int], terminator: Option[Int], include: Boolean) = {
+    val expr1 = padRight match {
+      case Some(padByte) => s"$kstreamName::bytes_strip_right($expr0, $padByte)"
+      case None => expr0
+    }
+    val expr2 = terminator match {
+      case Some(term) => s"$kstreamName::bytes_terminate($expr1, $term, $include)"
+      case None => expr1
+    }
+    expr2
+  }
+
+  override def userTypeDebugRead(id: String, dataType: DataType, assignType: DataType): Unit = {
+    val expr = if (assignType != dataType) {
+      s"static_cast<${kaitaiType2NativeType(dataType)}>($id)"
+    } else {
+      id
+    }
+    outSrc.puts(s"$expr->_read();")
+  }
+
+  override def switchRequiresIfs(onType: DataType): Boolean = onType match {
+    case _: IntType | _: EnumType => false
+    case _ => true
+  }
+
+  //<editor-fold desc="switching: true version">
+
+  override def switchStart(id: Identifier, on: Ast.expr): Unit = {
+    // Initialize the UnionBuilder
+    outSrc.puts(s"auto& ${typeToId(nameList.last) + "A__Z" + idToStr(id)}_unionbuilder = ${typeToId(nameList.last)}_builder.content<Field_${typeToId(nameList.last)}::${typeToId(nameList.last) + "A__Z" + idToStr(id)}>();")
+    outSrc.puts(s"switch (${expression(on)}) {")
+  }
+
+  override def switchCaseFirstStart(condition: Ast.expr): Unit = {
+    outSrc.puts(s"case ${expression(condition)}: {")
+    outSrc.inc
+  }
+
+  override def switchCaseStart(condition: Ast.expr): Unit = {
+    outSrc.puts(s"case ${expression(condition)}: {")
+    outSrc.inc
+  }
+
+  override def switchCaseEnd(): Unit = {
+    outSrc.puts("break;")
+    outSrc.dec
+    outSrc.puts("}")
+  }
+
+  override def switchElseStart(): Unit = {
+    outSrc.puts("default: {")
+    outSrc.inc
+  }
+
+  override def switchEnd(): Unit =
+    outSrc.puts("}")
+
+  //</editor-fold>
+
+  //<editor-fold desc="switching: emulation with ifs">
+
+  override def switchIfStart(id: Identifier, on: Ast.expr, onType: DataType): Unit = {
+    outSrc.puts("{")
+    outSrc.inc
+    outSrc.puts(s"${kaitaiType2NativeType(onType)} on = ${expression(on)};")
+  }
+
+  override def switchIfCaseFirstStart(condition: Ast.expr): Unit = {
+    outSrc.puts(s"if (on == ${expression(condition)}) {")
+    outSrc.inc
+  }
+
+  override def switchIfCaseStart(condition: Ast.expr): Unit = {
+    outSrc.puts(s"else if (on == ${expression(condition)}) {")
+    outSrc.inc
+  }
+
+  override def switchIfCaseEnd(): Unit = {
+    outSrc.dec
+    outSrc.puts("}")
+  }
+
+  override def switchIfElseStart(): Unit = {
+    outSrc.puts("else {")
+    outSrc.inc
+  }
+
+  override def switchIfEnd(): Unit = {
+    outSrc.dec
+    outSrc.puts("}")
+  }
+
+  //</editor-fold>
+
+  override def switchBytesOnlyAsRaw = true
+
+  override def instanceDeclaration(attrName: InstanceIdentifier, attrType: DataType, isNullable: Boolean): Unit = {
+    ensureMode(PrivateAccess)
+    outHdr.puts(s"bool ${calculatedFlagForName(attrName)};")
+    outHdr.puts(s"${kaitaiType2NativeType(attrType)} ${privateMemberName(attrName)};")
+    declareNullFlag(attrName, isNullable)
+  }
+
+  override def instanceHeader(className: List[String], instName: InstanceIdentifier, dataType: DataType, isNullable: Boolean): Unit = {
+    ensureMode(PublicAccess)
+    outHdr.puts(s"${kaitaiType2NativeType(dataType.asNonOwning())} ${publicMemberName(instName)}();")
+
+    outSrc.puts
+    outSrc.puts(s"${kaitaiType2NativeType(dataType.asNonOwning(), true)} ${types2class(className)}::${publicMemberName(instName)}() {")
+    outSrc.inc
+  }
+
+  override def instanceFooter: Unit = {
+    outSrc.dec
+    outSrc.puts("}")
+  }
+
+  override def instanceCheckCacheAndReturn(instName: InstanceIdentifier, dataType: DataType): Unit = {
+    outSrc.puts(s"auto& ${typeToId(nameList.last) + "A__Z" + idToStr(instName)}_builder = ${typeToId(nameList.last)}_builder.content<Field_${typeToId(nameList.last)}::${typeToId(nameList.last) + "A__Z" + idToStr(instName)}>();")
+    outSrc.puts(s"if (${calculatedFlagForName(instName)})")
+    outSrc.inc
+    instanceReturn(instName, dataType)
+    outSrc.dec
+  }
+
+  override def instanceReturn(instName: InstanceIdentifier, attrType: DataType): Unit = {
+    outSrc.puts(s"${typeToId(nameList.last) + "A__Z" + idToStr(instName)}_builder.append(${nonOwningPointer(instName, attrType)});")
+    outSrc.puts(s"return ${nonOwningPointer(instName, attrType)};")
+    }
+
+  override def instanceCalculate(instName: Identifier, dataType: DataType, value: Ast.expr): Unit = {
+    if (attrDebugNeeded(instName))
+      attrDebugStart(instName, dataType, None, NoRepeat)
+    val valExpr = expression(value)
+    val isOwningInExpr = dataType match {
+      case ct: ComplexDataType => ct.isOwningInExpr
+      case _ => false
+    }
+    val valExprConverted = if (isOwningInExpr) {
+      config.cppConfig.pointers match {
+        case RawPointers =>
+          valExpr
+        case UniqueAndRawPointers =>
+          s"$valExpr.get()"
+      }
+    } else {
+      valExpr
+    }
+    handleAssignmentSimple(instName, valExprConverted)
+  }
+
+  override def enumDeclaration(curClass: List[String], enumName: String, enumColl: Seq[(Long, EnumValueSpec)]): Unit = {
+    val enumClass = types2class(List(enumName))
+
+    outHdr.puts
+    outHdr.puts(s"enum $enumClass {")
+    outHdr.inc
+
+    if (enumColl.size > 1) {
+      enumColl.dropRight(1).foreach { case (id, label) =>
+        outHdr.puts(s"${value2Const(enumName, label.name)} = ${translator.doIntLiteral(id)},")
+      }
+    }
+    enumColl.last match {
+      case (id, label) =>
+        outHdr.puts(s"${value2Const(enumName, label.name)} = ${translator.doIntLiteral(id)}")
+    }
+
+    outHdr.dec
+    outHdr.puts("};")
+  }
+
+  override def classToString(toStringExpr: Ast.expr): Unit = {
+    ensureMode(PublicAccess)
+    // _to_string() method
+    outHdr.puts(s"std::string _to_string() const;")
+    outSrc.puts
+    outSrc.puts(s"std::string ${types2class(typeProvider.nowClass.name)}::_to_string() const {")
+    outSrc.inc
+    outSrc.puts(s"return ${translator.translate(toStringExpr)};")
+    outSrc.dec
+    outSrc.puts("}")
+
+    // operator<< that trivially calls ._to_string()
+    outHdr.puts(s"friend std::ostream& operator<<(std::ostream& os, const ${types2class(typeProvider.nowClass.name)}& obj);")
+    outSrc.puts
+    outSrc.puts(s"std::ostream& operator<<(std::ostream& os, const ${types2class(typeProvider.nowClass.name)}& obj) {")
+    outSrc.inc
+    outSrc.puts("os << obj._to_string();")
+    outSrc.puts("return os;")
+    outSrc.dec
+    outSrc.puts("}")
+  }
+
+  def value2Const(enumName: String, label: String) = Utils.upperUnderscoreCase(enumName + "_" + label)
+
+  def defineName(className: String) = Utils.upperUnderscoreCase(className) + "_H_"
+
+  /**
+    * Returns name of a member that stores "calculated flag" for a given lazy
+    * attribute. That is, if it's true, then calculation have already taken
+    * place and we need to return already calculated member in a getter, or,
+    * if it's false, we need to calculate / parse it first.
+    * @param ksName attribute ID
+    * @return calculated flag member name associated with it
+    */
+  def calculatedFlagForName(ksName: Identifier) =
+    s"f_${idToStr(ksName)}"
+
+  /**
+    * Returns name of a member that stores "null flag" for a given attribute,
+    * that is, if it's true, then associated attribute is null.
+    * @param ksName attribute ID
+    * @return null flag member name associated with it
+    */
+  def nullFlagForName(ksName: Identifier) =
+    s"n_${idToStr(ksName)}"
+
+  override def idToStr(id: Identifier): String = AwkwardCompiler.idToStr(id)
+
+  override def publicMemberName(id: Identifier): String = AwkwardCompiler.publicMemberName(id)
+
+  override def privateMemberName(id: Identifier): String = s"m_${idToStr(id)}"
+
+
+  override def localTemporaryName(id: Identifier): String = s"_t_${idToStr(id)}"
+
+  override def paramName(id: Identifier): String = s"p_${idToStr(id)}"
+
+  def declareNullFlag(attrName: Identifier, isNullable: Boolean) = {
+    if (isNullable) {
+      outHdr.puts(s"bool ${nullFlagForName(attrName)};")
+      ensureMode(PublicAccess)
+      outHdr.puts(s"bool _is_null_${idToStr(attrName)}() { ${publicMemberName(attrName)}(); return ${nullFlagForName(attrName)}; };")
+      ensureMode(PrivateAccess)
+    }
+  }
+
+  override def type2class(className: String): String = AwkwardCompiler.type2class(className)
+
+  def types2type(types: String): String = {
+    val lastIndex = types.lastIndexOf(":")
+
+    if (lastIndex != -1)
+      types.substring(lastIndex + 1).dropRight(3)
+    else
+      types.dropRight(3)
+  }
+
+  def kaitaiType2NativeType(attrType: DataType, absolute: Boolean = false): String = {
+    AwkwardCompiler.kaitaiType2NativeType(config.cppConfig, attrType, absolute)
+  }
+
+  /**
+    * creates the builder map which maps the ClassSpec information to the path.
+    * @param curClass the current ClassCpec
+    * @param firstSpec the first ClassSpec
+    * @param path current path string
+    */
+  override def createBuilderMap(curClass: ClassSpec, firstSpec: ClassSpec, path: String) {
+    directedMap.getOrElseUpdate(path, ListBuffer.empty[String])
+    builderMap(path) = curClass
+    curClass.seq.foreach { el =>
+      el.dataType match {
+        case userType: UserType =>
+          directedMap(path) += path + "A__Z" + idToStr(el.id)
+          typeToId(userType.name.head) = path + "A__Z" + idToStr(el.id)
+          typeToRepeat(path + "A__Z" + idToStr(el.id)) = el.cond.repeat
+          createBuilderMap(firstSpec.types(userType.name.head), firstSpec, typeToId(userType.name.head))
+        case switchType: SwitchType =>
+          switchType.cases.values.foreach {
+            case ut: UserType =>
+              directedMap(path) += path + "A__Z" + idToStr(el.id) + "_case_" + ut.name.head
+              typeToId(ut.name.head) = path + "A__Z" + idToStr(el.id) + "_case_" + ut.name.head
+              typeToRepeat(path + "A__Z" + idToStr(el.id) + "_case_" + ut.name.head) = el.cond.repeat
+              createBuilderMap(firstSpec.types(ut.name.head), firstSpec, typeToId(ut.name.head))
+            case _ =>
+          }
+        case et: EnumType => println(s"enum createBuilderMap $curClass\n")
+        case _ =>
+      }
+    }
+    println(s"\nmap: $directedMap\n")
+    // if (curClass == firstSpec) {
+    //   firstSpec.enums
+    // }
+  }
+
+  /**
+    * Uses the information in builderMap to create the builder structure based on the data type.
+    * @param builder the current RecordBuilder to be filled.
+    * @param key the path to search in the builderMap.
+    */
+  def createBuilderStructure(builder: RecordBuilder, key: String): Unit = {
+    builderMap(key) match { case cs: ClassSpec =>
+      var newPath = typeToId(cs.name.last)
+      cs.seq.foreach { el =>
+        el.dataType match {
+          case userType: UserType =>
+            // for UserType, RecordBuilder will be generated.
+            checkUnion(newPath + "A__Z" + idToStr(el.id)) = ""
+            builder.fields += newPath + "A__Z" + idToStr(el.id)
+            var builderContent = checkOption(el, newPath + "A__Z" + idToStr(el.id), RecordBuilder(ListBuffer(), ListBuffer()))
+            builder.contents += checkRepeat(el.cond.repeat, builderContent)
+            builder.contents.last match {
+              case recordBuilder: AwkwardCompiler.this.RecordBuilder =>
+                createBuilderStructure(recordBuilder, newPath + "A__Z" + idToStr(el.id))
+              case listOffsetBuilder: AwkwardCompiler.this.ListOffsetBuilder =>
+                listOffsetBuilder.content match {
+                  case rb: AwkwardCompiler.this.RecordBuilder =>
+                    createBuilderStructure(rb, newPath + "A__Z" + idToStr(el.id))
+                  case ib: AwkwardCompiler.this.IndexedOptionBuilder =>
+                    createBuilderStructure(ib.content.asInstanceOf[RecordBuilder], newPath + "A__Z" + idToStr(el.id))
+                  case _ =>
+                }
+              case indexedOptionBuilder: AwkwardCompiler.this.IndexedOptionBuilder =>
+                createBuilderStructure(indexedOptionBuilder.content.asInstanceOf[RecordBuilder], newPath + "A__Z" + idToStr(el.id))
+              case unsupportedBuilder => throw new UnsupportedOperationException(s"Unsupported builder: $unsupportedBuilder")
+            }
+          case switchType: SwitchType =>
+            // for SwitchType, UnionBuilder will be generated.
+            builder.fields += newPath + "A__Z" + idToStr(el.id)
+            builder.contents += checkRepeat(el.cond.repeat, UnionBuilder(ListBuffer()))
+            checkUnion(newPath + "A__Z" + idToStr(el.id)) = "parent"
+            val unionBuilder = builder.contents.last match {
+              case lb: AwkwardCompiler.this.ListOffsetBuilder => lb.content.asInstanceOf[UnionBuilder]
+              case ub: AwkwardCompiler.this.UnionBuilder => ub.asInstanceOf[UnionBuilder]
+            }
+            switchType.cases.values.zipWithIndex.foreach { case (dataType, index) =>
+              dataType match {
+                case userType: UserType =>
+                  checkUnion(newPath + "A__Z" + idToStr(el.id) + "_case_" + userType.name.head) = "child_" + index
+                  unionBuilder.caseField(index) = newPath + "A__Z" + idToStr(el.id) + "_case_" + userType.name.head
+                  var builderContent = checkOption(el, newPath + "A__Z" + idToStr(el.id) + "_case_" + userType.name.head, RecordBuilder(ListBuffer(), ListBuffer()))
+                  unionBuilder.contents += checkRepeat(el.cond.repeat, builderContent)
+                  unionBuilder.contents.last match {
+                    case recordBuilder: AwkwardCompiler.this.RecordBuilder =>
+                      createBuilderStructure(recordBuilder, newPath + "A__Z" + idToStr(el.id) + "_case_" + userType.name.head)
+                    case listOffsetBuilder: AwkwardCompiler.this.ListOffsetBuilder =>
+                      listOffsetBuilder.content match {
+                        case rb: AwkwardCompiler.this.RecordBuilder =>
+                          createBuilderStructure(rb, newPath + "A__Z" + idToStr(el.id) + "_case_" + userType.name.head)
+                        case ib: AwkwardCompiler.this.IndexedOptionBuilder =>
+                          createBuilderStructure(ib.content.asInstanceOf[RecordBuilder], newPath + "A__Z" + idToStr(el.id) + "_case_" + userType.name.head)
+                        case _ =>
+                      }
+                    case indexedOptionBuilder: AwkwardCompiler.this.IndexedOptionBuilder =>
+                      createBuilderStructure(indexedOptionBuilder.content.asInstanceOf[RecordBuilder], newPath + "A__Z" + idToStr(el.id) + "_case_" + userType.name.head)
+                    case unsupportedBuilder => throw new UnsupportedOperationException(s"Unsupported builder: $unsupportedBuilder")
+                  }
+                case _ =>
+              }
+            }
+          case Int1Type(_) | IntMultiType(_, _, _) | FloatMultiType(_, _) | BitsType(_, _) |
+           _: BooleanType | CalcIntType | CalcFloatType  =>
+            // for primitive types, NumpyBuilder will be generated.
+            builder.fields += newPath + "A__Z" + idToStr(el.id)
+            var builderContent = checkOption(el, newPath + "A__Z" + idToStr(el.id), NumpyBuilder(kaitaiType2NativeType(el.dataType)))
+            builder.contents += checkRepeat(el.cond.repeat, builderContent)
+          case _: StrType | _: BytesType =>
+            // for strings, ListOffsetBuilder(int64_t, NumpyBuilder(uint8_t)) will be generated.
+            builder.fields += newPath + "A__Z" + idToStr(el.id)
+            var builderContent = checkOption(el, newPath + "A__Z" + idToStr(el.id), ListOffsetBuilder("int64_t", NumpyBuilder("uint8_t")))
+            builder.contents += checkRepeat(el.cond.repeat, builderContent)
+          case enumType: EnumType => println(s"enum createBuilderStructure $cs\n")
+          case _ => throw new UnsupportedOperationException(s"Unsupported data type: ${el.dataType}")
+        }
+      }
+
+      instancesMap.getOrElseUpdate(newPath, ListBuffer.empty[String])
+      cs.instances.foreach { case (instName, instSpec) =>
+        instancesMap(newPath) += idToStr(instName)
+        builder.fields += newPath + "A__Z" + idToStr(instName)
+        instSpec.dataTypeComposite.asNonOwning() match {
+          case et: EnumType => 
+            println(s"enum instance $cs\n")
+            builder.contents += NumpyBuilder(kaitaiType2NativeType(et.basedOn))
+          case _ => builder.contents += NumpyBuilder(kaitaiType2NativeType(instSpec.dataTypeComposite.asNonOwning()))
+        }
+      }
+      case _ =>
+    }
+    println(s"\ninstances: $instancesMap\n")
+  }
+
+  /**
+    * Checks the repeat condition for adding ListOffsetBuilder.
+    * @param rep RepeatSpec of the identifier
+    * @param builderContent last content of the current builder.
+    * @return the builder content obtained after checking the conditions.
+    */
+  def checkRepeat(rep: RepeatSpec, builderContent: LayoutBuilder): LayoutBuilder = {
+    rep match {
+      case NoRepeat => builderContent
+      case _ => ListOffsetBuilder("int64_t", builderContent)
+    }
+  }
+
+  /**
+    * Checks the repeat condition for adding IndexedOptionBuilder.
+    * @param spec the AttrSpec of the current Class.
+    * @param key path of the id to be checked.
+    * @param builderContent last content of the current builder.
+    * @return the builder content obtained after checking the conditions.
+    */
+  def checkOption(spec: AttrSpec, key: String, builderContent: LayoutBuilder): LayoutBuilder = {
+    if (spec.cond.ifExpr.isDefined) {
+      isIndexedOption(key) = true
+      IndexedOptionBuilder("int64_t", builderContent)
+    }
+    else {
+      isIndexedOption(key) = false
+      builderContent
+    }
+  }
+
+  /**
+    * Checks if the field id comes from a union builder content.
+    * @param fieldId current field id.
+    * @return extracted field id.
+    */
+  def getId(fieldId: String): String = {
+    val caseIndex = fieldId.lastIndexOf("_case_")
+
+    if (caseIndex != -1 && !fieldId.substring(caseIndex + "_case_".length).contains("A__Z")) {
+      fieldId.substring(0, caseIndex)
+    } else {
+      fieldId
+    }
+  }
+
+  /**
+    * Prints the builder type declarations for each class recursively based on the directed Map order.
+    * @param parentClass name of the parent class.
+    */
+  def builderTypeDeclaration(parentClass: String): Unit = {
+    directedMap(parentClass).foreach { childClass =>
+      val unionIndex = checkUnion.getOrElse(childClass, "")
+      outHdrAwkward.puts(
+        s"${if (true) "using " + childClass.capitalize + "BuilderType = decltype(std::declval<" + parentClass.capitalize + 
+        s"BuilderType>().content<Field_${parentClass}::${getId(childClass)}>()" +
+        s"${if (isIndexedOption(childClass) == true) ".content()" else ""}" +
+        s"${if (typeToRepeat(childClass) != NoRepeat) ".content()" else ""}" +
+        s"${if (unionIndex.contains("child")) ".content<" + unionIndex.split("_").last + ">()" else ""});" else ""}"
+      )
+      builderTypeDeclaration(childClass)
+    }
+  }
+
+  /**
+    * Generates the C/C++ strings for methods that load the raw
+    * file and fill the Awkward buffers. These methods are accessed
+    * from Python via ctypes
+    * @param topClassName name of the root class
+    */
+  def ctypesStrings(topClassName: String): Unit = {
+    val builderType = s"${topClassName.capitalize}BuilderType"
+    
+    outHdr.puts
+    outHdr.puts(s"#ifndef USE_${topClassName.toUpperCase()}_")
+    outHdr.puts(s"#define USE_${topClassName.toUpperCase()}_")
+    outSrc.puts
+    outSrc.puts(s"#ifdef USE_${topClassName.toUpperCase()}_")
+
+    outHdr.puts
+    outHdr.puts(s"std::map<std::string, $builderType*> builder_map;")
+    outHdr.puts
+    outHdr.puts(s"inline $builderType* load(std::string file_path);")
+    outHdr.puts
+    outSrc.puts
+    outSrc.puts(s"inline $builderType* load(std::string file_path) {")
+    outSrc.inc
+    outSrc.puts("std::ifstream infile(file_path, std::ifstream::binary);")
+    outSrc.puts("kaitai::kstream ks(&infile);")
+    outSrc.puts(s"${topClassName}_t* obj = new ${topClassName}_t(&ks);")
+    outSrc.puts(s"builder_map[file_path] = &(obj->${topClassName}_builder);")
+    outSrc.puts("return builder_map[file_path];")
+    outSrc.dec
+    outSrc.puts(s"}")
+    outSrc.puts
+
+    outHdr.puts(s"""extern "C" {""")
+    outHdr.puts
+    outHdr.inc
+    outSrc.puts(s"""extern "C" {""")
+    outSrc.puts
+    outSrc.inc
+
+    outHdr.puts("struct Result {")
+    outHdr.inc
+    outHdr.puts("void* builder;")
+    outHdr.puts("const char* error_message;")
+    outHdr.dec
+    outHdr.puts("};")
+    outHdr.puts
+
+    outHdr.puts("inline Result fill(const char* file_path);")
+    outHdr.puts
+    outSrc.puts("inline Result fill(const char* file_path) {")
+    outSrc.inc
+    outSrc.puts("Result result;")
+    outSrc.puts("std::string error_message;")
+    outSrc.puts(s"$builderType* builder = load(file_path);")
+    outSrc.puts("bool is_valid = builder->is_valid(error_message);")
+    outSrc.puts("if (is_valid) {")
+    outSrc.inc
+    outSrc.puts("result.builder = builder;")
+    outSrc.puts("result.error_message = NULL;")
+    outSrc.dec
+    outSrc.puts("}")
+    outSrc.puts("else {")
+    outSrc.inc
+    outSrc.puts("result.builder = NULL;")
+    outSrc.puts("result.error_message = error_message.c_str();")
+    outSrc.dec
+    outSrc.puts("}")
+    outSrc.puts("return result;")
+    outSrc.dec
+    outSrc.puts("}")
+    outSrc.puts
+
+    outHdr.puts("inline const char* form(void* builder);")
+    outHdr.puts
+    outSrc.puts("inline const char* form(void* builder) {")
+    outSrc.inc
+    outSrc.puts(s"return strdup(reinterpret_cast<$builderType*>(builder)->form().c_str());")
+    outSrc.dec
+    outSrc.puts("}")
+    outSrc.puts
+
+    outHdr.puts("inline int64_t length(void* builder);")
+    outHdr.puts
+    outSrc.puts("inline int64_t length(void* builder) {")
+    outSrc.inc
+    outSrc.puts(s"return reinterpret_cast<$builderType*>(builder)->length();")
+    outSrc.dec
+    outSrc.puts("}")
+    outSrc.puts
+
+    outHdr.puts("inline int64_t num_buffers(void* builder);")
+    outHdr.puts
+    outSrc.puts("inline int64_t num_buffers(void* builder) {")
+    outSrc.inc
+    outSrc.puts(s"return awkward::num_buffers_helper(reinterpret_cast<$builderType*>(builder));")
+    outSrc.dec
+    outSrc.puts("}")
+    outSrc.puts
+
+    outHdr.puts("inline const char* buffer_name(void* builder, int64_t index);")
+    outHdr.puts
+    outSrc.puts("inline const char* buffer_name(void* builder, int64_t index) {")
+    outSrc.inc
+    outSrc.puts(s"return awkward::buffer_name_helper(reinterpret_cast<$builderType*>(builder))[index].c_str();")
+    outSrc.dec
+    outSrc.puts("}")
+    outSrc.puts
+
+    outHdr.puts("inline int64_t buffer_size(void* builder, int64_t index);")
+    outHdr.puts
+    outSrc.puts("inline int64_t buffer_size(void* builder, int64_t index) {")
+    outSrc.inc
+    outSrc.puts(s"return awkward::buffer_size_helper(reinterpret_cast<$builderType*>(builder))[index];")
+    outSrc.dec
+    outSrc.puts("}")
+    outSrc.puts
+
+    outHdr.puts("inline void copy_into(const char* name, void* from_builder, void* to_buffer, int64_t index);")
+    outHdr.puts
+    outSrc.puts("inline void copy_into(const char* name, void* from_builder, void* to_buffer, int64_t index) {")
+    outSrc.inc
+    outSrc.puts(s"reinterpret_cast<$builderType*>(from_builder)->to_buffer(to_buffer, name);")
+    outSrc.dec
+    outSrc.puts("}")
+    outSrc.puts
+
+    outHdr.puts("inline void deallocate(void* builder);")
+    outHdr.dec
+    outSrc.puts("inline void deallocate(void* builder) {")
+    outSrc.inc
+    outSrc.puts(s"reinterpret_cast<$builderType*>(builder)->clear();")
+    outSrc.dec
+    outSrc.puts("}")
+    outSrc.dec
+
+    outHdr.puts("}")
+    outHdr.puts
+    outHdr.puts(s"#endif // USE_${topClassName.toUpperCase()}_")
+    outHdr.puts
+    outSrc.puts("}")
+    outSrc.puts
+    outSrc.puts(s"#endif // USE_${topClassName.toUpperCase()}_")
+    outSrc.puts
+  }
+
+  def nullPtr: String = config.cppConfig.pointers match {
+    case RawPointers => "0"
+    case SharedPointers | UniqueAndRawPointers => "nullptr"
+  }
+
+  def nonOwningPointer(attrName: Identifier, attrType: DataType): String = {
+    config.cppConfig.pointers match {
+      case RawPointers =>
+        privateMemberName(attrName)
+      case UniqueAndRawPointers =>
+        attrType match {
+          case st: SwitchType =>
+            nonOwningPointer(attrName, combineSwitchType(st))
+          case t: ComplexDataType =>
+            if (t.isOwning) {
+              s"${privateMemberName(attrName)}.get()"
+            } else {
+              privateMemberName(attrName)
+            }
+          case _ =>
+            privateMemberName(attrName)
+        }
+      case _ => ""
+    }
+  }
+
+  def stdMoveWrap(expr: String): String = config.cppConfig.pointers match {
+    case UniqueAndRawPointers => s"std::move($expr)"
+    case _ => expr
+  }
+
+  override def ksErrorName(err: KSError): String = err match {
+    case EndOfStreamError => "std::ifstream::failure"
+    case UndecidedEndiannessError => "kaitai::undecided_endianness_error"
+    case ConversionError => "std::invalid_argument"
+    case validationErr: ValidationError =>
+      val cppType = kaitaiType2NativeType(validationErr.dt, true)
+      val cppErrName = validationErr match {
+        case _: ValidationNotEqualError => "validation_not_equal_error"
+        case _: ValidationLessThanError => "validation_less_than_error"
+        case _: ValidationGreaterThanError => "validation_greater_than_error"
+        case _: ValidationNotAnyOfError => "validation_not_any_of_error"
+        case _: ValidationExprError => "validation_expr_error"
+      }
+      s"kaitai::$cppErrName<$cppType>"
+  }
+
+  override def attrValidateExpr(
+    attrId: Identifier,
+    attrType: DataType,
+    checkExpr: Ast.expr,
+    err: KSError,
+    errArgs: List[Ast.expr]
+  ): Unit = {
+    val errArgsStr = errArgs.map(translator.translate).mkString(", ")
+    importListSrc.addKaitai("kaitai/exceptions.h")
+    outSrc.puts(s"if (!(${translator.translate(checkExpr)})) {")
+    outSrc.inc
+    outSrc.puts(s"throw ${ksErrorName(err)}($errArgsStr);")
+    outSrc.dec
+    outSrc.puts("}")
+  }
+}
+
+object AwkwardCompiler extends LanguageCompilerStatic
+  with StreamStructNames {
+  override def getCompiler(
+    tp: ClassTypeProvider,
+    config: RuntimeConfig
+  ): LanguageCompiler = new AwkwardCompiler(tp, config)
+
+  def idToStr(id: Identifier): String =
+    id match {
+      case SpecialIdentifier(name) => Utils.lowerUnderscoreCase(name)
+      case NamedIdentifier(name) => Utils.lowerUnderscoreCase(name)
+      case NumberedIdentifier(idx) => s"_${NumberedIdentifier.TEMPLATE}$idx"
+      case InstanceIdentifier(name) => Utils.lowerUnderscoreCase(name)
+      case RawIdentifier(inner) => s"_raw_${idToStr(inner)}"
+      case IoStorageIdentifier(inner) => s"_io_${idToStr(inner)}"
+    }
+
+  def publicMemberName(id: Identifier): String = idToStr(id)
+
+  override def kstructName = "kaitai::kstruct"
+  override def kstreamName = "kaitai::kstream"
+
+  def kaitaiType2NativeType(config: CppRuntimeConfig, attrType: DataType, absolute: Boolean = false): String = {
+    attrType match {
+      case Int1Type(false) => "uint8_t"
+      case IntMultiType(false, Width2, _) => "uint16_t"
+      case IntMultiType(false, Width4, _) => "uint32_t"
+      case IntMultiType(false, Width8, _) => "uint64_t"
+
+      case Int1Type(true) => "int8_t"
+      case IntMultiType(true, Width2, _) => "int16_t"
+      case IntMultiType(true, Width4, _) => "int32_t"
+      case IntMultiType(true, Width8, _) => "int64_t"
+
+      case FloatMultiType(Width4, _) => "float"
+      case FloatMultiType(Width8, _) => "double"
+
+      case BitsType(_, _) => "uint64_t"
+
+      case _: BooleanType => "bool"
+      case CalcIntType => "int32_t"
+      case CalcFloatType => "double"
+
+      case _: StrType => "std::string"
+      case _: BytesType => "std::string"
+
+      case t: UserType =>
+        val typeStr = types2class(if (absolute) {
+          t.classSpec.get.name
+        } else {
+          t.name
+        })
+        config.pointers match {
+          case RawPointers => s"$typeStr*"
+          case SharedPointers => s"std::shared_ptr<$typeStr>"
+          case UniqueAndRawPointers =>
+            if (t.isOwning) s"std::unique_ptr<$typeStr>" else s"$typeStr*"
+        }
+
+      case t: EnumType =>
+        types2class(if (absolute) {
+          t.enumSpec.get.name
+        } else {
+          t.name
+        })
+
+      case ArrayTypeInStream(inType) => config.pointers match {
+        case RawPointers => s"std::vector<${kaitaiType2NativeType(config, inType, absolute)}>*"
+        case UniqueAndRawPointers => s"std::unique_ptr<std::vector<${kaitaiType2NativeType(config, inType, absolute)}>>"
+        case _ => ""
+      }
+      case CalcArrayType(inType, _) => s"std::vector<${kaitaiType2NativeType(config, inType, absolute)}>*"
+      case OwnedKaitaiStreamType => config.pointers match {
+        case RawPointers => s"$kstreamName*"
+        case UniqueAndRawPointers => s"std::unique_ptr<$kstreamName>"
+        case _ => ""
+      }
+      case KaitaiStreamType => s"$kstreamName*"
+      case KaitaiStructType => config.pointers match {
+        case RawPointers => s"$kstructName*"
+        case SharedPointers => s"std::shared_ptr<$kstructName>"
+        case UniqueAndRawPointers => s"std::unique_ptr<$kstructName>"
+      }
+      case CalcKaitaiStructType(_) => config.pointers match {
+        case RawPointers => s"$kstructName*"
+        case SharedPointers => s"std::shared_ptr<$kstructName>"
+        case UniqueAndRawPointers => s"$kstructName*"
+      }
+
+      case st: SwitchType =>
+        kaitaiType2NativeType(config, combineSwitchType(st), absolute)
+      case _ => ""
+    }
+  }
+
+  /**
+    * C++ does not have a concept of AnyType, and common use case "lots of
+    * incompatible UserTypes for cases + 1 BytesType for else" combined would
+    * result in exactly AnyType - so we try extra hard to avoid that here with
+    * this pre-filtering. In C++, "else" case with raw byte array would
+    * be available through _raw_* attribute anyway.
+    *
+    * @param st switch type to combine into one overall type
+    * @return
+    */
+  def combineSwitchType(st: SwitchType): DataType = {
+    val ct1 = TypeDetector.combineTypes(
+      st.cases.filterNot {
+        case (caseExpr, _: BytesType) => caseExpr == SwitchType.ELSE_CONST
+        case _ => false
+      }.values
+    )
+    if (st.isOwning) {
+      ct1
+    } else {
+      ct1.asNonOwning()
+    }
+  }
+
+  def types2class(typeName: Ast.typeId) = {
+    typeName.names.map(type2class).mkString(
+      if (typeName.absolute) "::" else "",
+      "::",
+      ""
+    )
+  }
+
+  def types2class(components: List[String]) =
+    components.map(type2class).mkString("::")
+
+  def type2class(name: String) = Utils.lowerUnderscoreCase(name) + "_t"
+}
