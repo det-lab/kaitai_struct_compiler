@@ -9,7 +9,6 @@ trait LanguageCompilerStatic {
 
 object LanguageCompilerStatic {
   val NAME_TO_CLASS: Map[String, LanguageCompilerStatic] = Map(
-    "awkward" -> AwkwardCompiler,
     "construct" -> ConstructClassCompiler,
     "cpp_stl" -> CppCompiler,
     "csharp" -> CSharpCompiler,

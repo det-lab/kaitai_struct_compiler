@@ -23,7 +23,6 @@ class TranslatorSpec extends AnyFunSuite {
   // less and more than 32 Bit signed int
   everybody("1000000000", "1000000000")
   everybodyExcept("100000000000", "100000000000", Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "100000000000LL",
     CppCompiler -> "100000000000LL",
     GoCompiler -> "int64(100000000000)",
     JavaCompiler -> "100000000000L"
@@ -33,21 +32,18 @@ class TranslatorSpec extends AnyFunSuite {
   everybody("2147483647", "2147483647")
   // 0x8000_0000
   everybodyExcept("2147483648", "2147483648", Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "2147483648UL",
     CppCompiler -> "2147483648UL",
     GoCompiler -> "uint32(2147483648)",
     JavaCompiler -> "2147483648L",
   ))
   // 0xffff_ffff
   everybodyExcept("4294967295", "4294967295", Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "4294967295UL",
     CppCompiler -> "4294967295UL",
     GoCompiler -> "uint32(4294967295)",
     JavaCompiler -> "4294967295L",
   ))
   // 0x1_0000_0000
   everybodyExcept("4294967296", "4294967296", Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "4294967296LL",
     CppCompiler -> "4294967296LL",
     GoCompiler -> "int64(4294967296)",
     JavaCompiler -> "4294967296L",
@@ -56,14 +52,12 @@ class TranslatorSpec extends AnyFunSuite {
   everybody("-2147483647", "-2147483647")
   // -0x8000_0000
   everybodyExcept("-2147483648", "-2147483648", Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "(-2147483647 - 1)",
     CppCompiler -> "(-2147483647 - 1)",
     LuaCompiler -> "(-2147483647 - 1)",
     PHPCompiler -> "(-2147483647 - 1)",
   ))
   // -0x8000_0001
   everybodyExcept("-2147483649", "-2147483649", Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "-2147483649LL",
     CppCompiler -> "-2147483649LL",
     GoCompiler -> "int64(-2147483649)",
     JavaCompiler -> "-2147483649L",
@@ -71,14 +65,12 @@ class TranslatorSpec extends AnyFunSuite {
 
   // 0x7fff_ffff_ffff_ffff
   everybodyExcept("9223372036854775807", "9223372036854775807", Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "9223372036854775807LL",
     CppCompiler -> "9223372036854775807LL",
     GoCompiler -> "int64(9223372036854775807)",
     JavaCompiler -> "9223372036854775807L",
   ))
   // 0x8000_0000_0000_0000
   everybodyExcept("9223372036854775808", "9223372036854775808", Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "9223372036854775808ULL",
     CppCompiler -> "9223372036854775808ULL",
     GoCompiler -> "uint64(9223372036854775808)",
     JavaCompiler -> "0x8000000000000000L",
@@ -87,7 +79,6 @@ class TranslatorSpec extends AnyFunSuite {
   ))
   // 0xffff_ffff_ffff_ffff
   everybodyExcept("18446744073709551615", "18446744073709551615", Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "18446744073709551615ULL",
     CppCompiler -> "18446744073709551615ULL",
     GoCompiler -> "uint64(18446744073709551615)",
     JavaCompiler -> "0xffffffffffffffffL",
@@ -96,14 +87,12 @@ class TranslatorSpec extends AnyFunSuite {
   ))
   // -0x7fff_ffff_ffff_ffff
   everybodyExcept("-9223372036854775807", "-9223372036854775807", Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "-9223372036854775807LL",
     CppCompiler -> "-9223372036854775807LL",
     GoCompiler -> "int64(-9223372036854775807)",
     JavaCompiler -> "-9223372036854775807L",
   ))
   // -0x8000_0000_0000_0000
   everybodyExcept("-9223372036854775808", "-9223372036854775808", Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "(-9223372036854775807LL - 1)",
     CppCompiler -> "(-9223372036854775807LL - 1)",
     GoCompiler -> "int64(-9223372036854775808)",
     JavaCompiler -> "-9223372036854775808L",
@@ -142,7 +131,6 @@ class TranslatorSpec extends AnyFunSuite {
   everybody("1 == 2", "1 == 2", CalcBooleanType)
 
   full("2 < 3 ? \"foo\" : \"bar\"", CalcIntType, CalcStrType, Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "(2 < 3) ? (std::string(\"foo\")) : (std::string(\"bar\"))",
     CppCompiler -> "(2 < 3) ? (std::string(\"foo\")) : (std::string(\"bar\"))",
     CSharpCompiler -> "2 < 3 ? \"foo\" : \"bar\"",
     GoCompiler -> """var tmp1 string;
@@ -181,7 +169,6 @@ class TranslatorSpec extends AnyFunSuite {
 
   // Boolean literals
   full("true", CalcBooleanType, CalcBooleanType, Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "true",
     CppCompiler -> "true",
     CSharpCompiler -> "true",
     GoCompiler -> "true",
@@ -195,7 +182,6 @@ class TranslatorSpec extends AnyFunSuite {
   ))
 
   full("false", CalcBooleanType, CalcBooleanType, Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "false",
     CppCompiler -> "false",
     CSharpCompiler -> "false",
     GoCompiler -> "false",
@@ -209,7 +195,6 @@ class TranslatorSpec extends AnyFunSuite {
   ))
 
   full("some_bool.to_i", CalcBooleanType, CalcIntType, Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "some_bool()",
     CppCompiler -> "some_bool()",
     CSharpCompiler -> "(SomeBool ? 1 : 0)",
     GoCompiler -> """tmp1 := 0
@@ -228,7 +213,6 @@ class TranslatorSpec extends AnyFunSuite {
 
   // Member access
   full("foo_str", CalcStrType, CalcStrType, Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "foo_str()",
     CppCompiler -> "foo_str()",
     CSharpCompiler -> "FooStr",
     GoCompiler -> "this.FooStr",
@@ -242,7 +226,6 @@ class TranslatorSpec extends AnyFunSuite {
   ))
 
   full("foo_block", userOwnedType(List("block")), userBorrowedType(List("block")), Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "foo_block()",
     CppCompiler -> "foo_block()",
     CSharpCompiler -> "FooBlock",
     GoCompiler -> "this.FooBlock",
@@ -256,7 +239,6 @@ class TranslatorSpec extends AnyFunSuite {
   ))
 
   full("foo.bar", FooBarProvider, CalcStrType, Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "foo()->bar()",
     CppCompiler -> "foo()->bar()",
     CSharpCompiler -> "Foo.Bar",
     GoCompiler -> "this.Foo.Bar",
@@ -270,7 +252,6 @@ class TranslatorSpec extends AnyFunSuite {
   ))
 
   full("foo.inner.baz", FooBarProvider, CalcIntType, Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "foo()->inner()->baz()",
     CppCompiler -> "foo()->inner()->baz()",
     CSharpCompiler -> "Foo.Inner.Baz",
     GoCompiler -> "this.Foo.Inner.Baz",
@@ -284,7 +265,6 @@ class TranslatorSpec extends AnyFunSuite {
   ))
 
   full("_root.foo", userOwnedType(List("top_class", "block")), userBorrowedType(List("top_class", "block")), Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "_root()->foo()",
     CppCompiler -> "_root()->foo()",
     CSharpCompiler -> "M_Root.Foo",
     GoCompiler -> "this._root.Foo",
@@ -298,7 +278,6 @@ class TranslatorSpec extends AnyFunSuite {
   ))
 
   full("a != 2 and a != 5", CalcIntType, CalcBooleanType, Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "a() != 2 && a() != 5",
     CppCompiler -> "a() != 2 && a() != 5",
     CSharpCompiler -> "A != 2 && A != 5",
     GoCompiler -> "a != 2 && a != 5",
@@ -325,7 +304,6 @@ class TranslatorSpec extends AnyFunSuite {
   ))
 
   full("[34, 0, 10, 64, 65, 66, 92]", CalcIntType, CalcBytesType, Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "std::string(\"\\x22\\x00\\x0A\\x40\\x41\\x42\\x5C\", 7)",
     CppCompiler -> "std::string(\"\\x22\\x00\\x0A\\x40\\x41\\x42\\x5C\", 7)",
     CSharpCompiler -> "new byte[] { 34, 0, 10, 64, 65, 66, 92 }",
     GoCompiler -> "[]uint8{34, 0, 10, 64, 65, 66, 92}",
@@ -339,7 +317,6 @@ class TranslatorSpec extends AnyFunSuite {
   ))
 
   full("[255, 0, 255]", CalcIntType, CalcBytesType, Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "std::string(\"\\xFF\\x00\\xFF\", 3)",
     CppCompiler -> "std::string(\"\\xFF\\x00\\xFF\", 3)",
     CSharpCompiler -> "new byte[] { 255, 0, 255 }",
     GoCompiler -> "[]uint8{255, 0, 255}",
@@ -353,7 +330,6 @@ class TranslatorSpec extends AnyFunSuite {
   ))
 
   full("[0, 1, 2].length", CalcIntType, CalcIntType, Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "std::string(\"\\x00\\x01\\x02\", 3).length()",
     CppCompiler -> "std::string(\"\\x00\\x01\\x02\", 3).length()",
     GoCompiler -> "len([]uint8{0, 1, 2})",
     JavaCompiler -> "new byte[] { 0, 1, 2 }.length",
@@ -365,7 +341,6 @@ class TranslatorSpec extends AnyFunSuite {
   ))
 
   full("a[42]", ArrayTypeInStream(CalcStrType), CalcStrType, Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "a()->at(42)",
     CppCompiler -> "a()->at(42)",
     CSharpCompiler -> "A[42]",
     GoCompiler -> "this.A[42]",
@@ -379,7 +354,6 @@ class TranslatorSpec extends AnyFunSuite {
   ))
 
   full("a[42 - 2]", ArrayTypeInStream(CalcStrType), CalcStrType, Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "a()->at((42 - 2))",
     CppCompiler -> "a()->at((42 - 2))",
     CSharpCompiler -> "A[(42 - 2)]",
     GoCompiler -> "this.A[(42 - 2)]",
@@ -393,7 +367,6 @@ class TranslatorSpec extends AnyFunSuite {
   ))
 
   full("a.first", ArrayTypeInStream(CalcIntType), CalcIntType, Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "a()->front()",
     CppCompiler -> "a()->front()",
     CSharpCompiler -> "A[0]",
     GoCompiler -> "this.A[0]",
@@ -407,7 +380,6 @@ class TranslatorSpec extends AnyFunSuite {
   ))
 
   full("a.last", ArrayTypeInStream(CalcIntType), CalcIntType, Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "a()->back()",
     CppCompiler -> "a()->back()",
     CSharpCompiler -> "A[A.Count - 1]",
     GoCompiler -> "this.A[len(this.A)-1]",
@@ -421,7 +393,6 @@ class TranslatorSpec extends AnyFunSuite {
   ))
 
   full("a.size", ArrayTypeInStream(CalcIntType), CalcIntType, Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "a()->size()",
     CppCompiler -> "a()->size()",
     CSharpCompiler -> "A.Count",
     GoCompiler -> "len(this.A)",
@@ -436,7 +407,6 @@ class TranslatorSpec extends AnyFunSuite {
 
   // Strings
   full("\"str\"", CalcIntType, CalcStrType, Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "std::string(\"str\")",
     CppCompiler -> "std::string(\"str\")",
     CSharpCompiler -> "\"str\"",
     GoCompiler -> "\"str\"",
@@ -450,7 +420,6 @@ class TranslatorSpec extends AnyFunSuite {
   ))
 
   full("\"str\\nnext\"", CalcIntType, CalcStrType, Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "std::string(\"str\\nnext\")",
     CppCompiler -> "std::string(\"str\\nnext\")",
     CSharpCompiler -> "\"str\\nnext\"",
     GoCompiler -> "\"str\\nnext\"",
@@ -464,7 +433,6 @@ class TranslatorSpec extends AnyFunSuite {
   ))
 
   full("\"str\\u000anext\"", CalcIntType, CalcStrType, Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "std::string(\"str\\nnext\")",
     CppCompiler -> "std::string(\"str\\nnext\")",
     CSharpCompiler -> "\"str\\nnext\"",
     GoCompiler -> "\"str\\u000anext\"",
@@ -478,7 +446,6 @@ class TranslatorSpec extends AnyFunSuite {
   ))
 
   full("\"str\\0next\"", CalcIntType, CalcStrType, Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "std::string(\"str\\000next\", 8)",
     CppCompiler -> "std::string(\"str\\000next\", 8)",
     CSharpCompiler -> "\"str\\0next\"",
     GoCompiler -> "\"str\\000next\"",
@@ -492,7 +459,6 @@ class TranslatorSpec extends AnyFunSuite {
   ))
 
   everybodyExcept("\"str1\" + \"str2\"", "\"str1\" + \"str2\"", Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "std::string(\"str1\") + std::string(\"str2\")",
     CppCompiler -> "std::string(\"str1\") + std::string(\"str2\")",
     LuaCompiler -> "\"str1\" .. \"str2\"",
     PerlCompiler -> "\"str1\" . \"str2\"",
@@ -501,7 +467,6 @@ class TranslatorSpec extends AnyFunSuite {
   ), CalcStrType)
 
   everybodyExcept("\"str1\" == \"str2\"", "\"str1\" == \"str2\"", Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "std::string(\"str1\") == (std::string(\"str2\"))",
     CppCompiler -> "std::string(\"str1\") == (std::string(\"str2\"))",
     JavaCompiler -> "\"str1\".equals(\"str2\")",
     LuaCompiler -> "\"str1\" == \"str2\"",
@@ -510,7 +475,6 @@ class TranslatorSpec extends AnyFunSuite {
   ), CalcBooleanType)
 
   everybodyExcept("\"str1\" != \"str2\"", "\"str1\" != \"str2\"", Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "std::string(\"str1\") != std::string(\"str2\")",
     CppCompiler -> "std::string(\"str1\") != std::string(\"str2\")",
     JavaCompiler -> "!(\"str1\").equals(\"str2\")",
     LuaCompiler -> "\"str1\" ~= \"str2\"",
@@ -519,7 +483,6 @@ class TranslatorSpec extends AnyFunSuite {
   ), CalcBooleanType)
 
   everybodyExcept("\"str1\" < \"str2\"", "\"str1\" < \"str2\"", Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "(std::string(\"str1\").compare(std::string(\"str2\")) < 0)",
     CppCompiler -> "(std::string(\"str1\").compare(std::string(\"str2\")) < 0)",
     CSharpCompiler -> "(\"str1\".CompareTo(\"str2\") < 0)",
     JavaCompiler -> "(\"str1\".compareTo(\"str2\") < 0)",
@@ -529,7 +492,6 @@ class TranslatorSpec extends AnyFunSuite {
   ), CalcBooleanType)
 
   full("\"str\".length", CalcIntType, CalcIntType, Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "std::string(\"str\").length()",
     CppCompiler -> "std::string(\"str\").length()",
     CSharpCompiler -> "\"str\".Length",
     GoCompiler -> "utf8.RuneCountInString(\"str\")",
@@ -543,7 +505,6 @@ class TranslatorSpec extends AnyFunSuite {
   ))
 
   full("\"str\".reverse", CalcIntType, CalcStrType, Map[LanguageCompilerStatic, String](
-      AwkwardCompiler -> "kaitai::kstream::reverse(std::string(\"str\"))",
       CppCompiler -> "kaitai::kstream::reverse(std::string(\"str\"))",
       CSharpCompiler -> "new string(Array.Reverse(\"str\".ToCharArray()))",
       GoCompiler -> "kaitai.StringReverse(\"str\")",
@@ -557,7 +518,6 @@ class TranslatorSpec extends AnyFunSuite {
     ))
 
   full("\"12345\".to_i", CalcIntType, CalcIntType, Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "std::stoi(std::string(\"12345\"))",
     CppCompiler -> "std::stoi(std::string(\"12345\"))",
     CSharpCompiler -> "Convert.ToInt64(\"12345\", 10)",
     GoCompiler -> "func()(int){i, err := strconv.Atoi(\"12345\"); if (err != nil) { panic(err) }; return i}()",
@@ -571,7 +531,6 @@ class TranslatorSpec extends AnyFunSuite {
   ))
 
   full("\"1234fe\".to_i(16)", CalcIntType, CalcIntType, Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "std::stoi(std::string(\"1234fe\"), 0, 16)",
     CppCompiler -> "std::stoi(std::string(\"1234fe\"), 0, 16)",
     CSharpCompiler -> "Convert.ToInt64(\"1234fe\", 16)",
     GoCompiler -> "func()(int64){i, err := strconv.ParseInt(\"1234fe\", 16, 64); if (err != nil) { panic(err) }; return i}()",
@@ -586,7 +545,6 @@ class TranslatorSpec extends AnyFunSuite {
 
   // casts
   full("other.as<block>.bar", FooBarProvider, CalcStrType, Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "static_cast<top_class_t::block_t*>(other())->bar()",
     CppCompiler -> "static_cast<top_class_t::block_t*>(other())->bar()",
     CSharpCompiler -> "((TopClass.Block) (Other)).Bar",
     GoCompiler -> "this.Other.(TopClass.Block).Bar",
@@ -600,7 +558,6 @@ class TranslatorSpec extends AnyFunSuite {
   ))
 
   full("other.as<block::innerblock>.baz", FooBarProvider, CalcIntType, Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "static_cast<top_class_t::block_t::innerblock_t*>(other())->baz()",
     CppCompiler -> "static_cast<top_class_t::block_t::innerblock_t*>(other())->baz()",
     CSharpCompiler -> "((TopClass.Block.Innerblock) (Other)).Baz",
     GoCompiler -> "this.Other.(TopClass.Block.Innerblock).Baz",
@@ -615,7 +572,6 @@ class TranslatorSpec extends AnyFunSuite {
 
   // primitive pure types
   full("(1 + 2).as<s2>", CalcIntType, IntMultiType(true, Width2, None), Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "static_cast<int16_t>((1 + 2))",
     CppCompiler -> "static_cast<int16_t>((1 + 2))",
     CSharpCompiler -> "((short) ((1 + 2)))",
     GoCompiler -> "int16((1 + 2))",
@@ -630,7 +586,6 @@ class TranslatorSpec extends AnyFunSuite {
 
   // empty array casting
   full("[].as<bytes>", CalcIntType, CalcBytesType, Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "std::string(\"\", 0)",
     CppCompiler -> "std::string(\"\", 0)",
     CSharpCompiler -> "new byte[] {  }",
     GoCompiler -> "\"\"",
@@ -644,7 +599,6 @@ class TranslatorSpec extends AnyFunSuite {
   ))
 
   full("[].as<u1[]>", CalcIntType, ArrayTypeInStream(Int1Type(false)), Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "std::string(\"\")",
     CppCompiler -> "std::string(\"\")",
     CSharpCompiler -> "new List<byte> {  }",
     GoCompiler -> "[]uint8{}",
@@ -658,7 +612,6 @@ class TranslatorSpec extends AnyFunSuite {
   ))
 
   full("[].as<f8[]>", CalcIntType, ArrayTypeInStream(FloatMultiType(Width8, None)), Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "std::string(\"\", 0)",
     CppCompiler -> "std::string(\"\", 0)",
     CSharpCompiler -> "new List<double> {  }",
     GoCompiler -> "[]float64{}",
@@ -673,7 +626,6 @@ class TranslatorSpec extends AnyFunSuite {
 
   // type enforcement: casting to non-literal byte array
   full("[0 + 1, 5].as<bytes>", CalcIntType, CalcBytesType, Map[LanguageCompilerStatic, String](
-    AwkwardCompiler -> "???",
     CppCompiler -> "???",
     CSharpCompiler -> "new byte[] { (0 + 1), 5 }",
     GoCompiler -> "string([]byte{(0 + 1), 5})",
@@ -742,7 +694,6 @@ class TranslatorSpec extends AnyFunSuite {
     val goOutput = new StringLanguageOutputWriter("  ")
 
     val langs = Map[LanguageCompilerStatic, AbstractTranslator with TypeDetector](
-      AwkwardCompiler -> new AwkwardTranslator(tp, new CppImportList(), new CppImportList(), RuntimeConfig()),
       CppCompiler -> new CppTranslator(tp, new CppImportList(), new CppImportList(), RuntimeConfig()),
       CSharpCompiler -> new CSharpTranslator(tp, new ImportList()),
       GoCompiler -> new GoTranslator(goOutput, tp, new ImportList()),
