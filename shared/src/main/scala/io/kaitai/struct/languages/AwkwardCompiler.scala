@@ -160,6 +160,27 @@ class AwkwardCompiler(
   }
 
   /**
+    * Generates the IndexedBuilder structure.
+    * @param index the type of `index` buffer.
+    * @param content the type of IndexedBuilder content.
+    */
+  case class IndexedBuilder(
+    index: String,
+    content: LayoutBuilder
+  ) extends LayoutBuilder {
+
+    /**
+      * Prints the structure of IndexedBuilder.
+      * @param indent the number of spaces to indent the structure.
+      * @return strings containing the index type and the content of IndexedBuilder.
+      */
+    override def printBuilderStructure(indent: Int): String = {
+      val indexedContent = content.printBuilderStructure(indent)
+      s"IndexedBuilder<$index, ${indexedContent}>"
+    }
+  }
+
+  /**
     * Generates the IndexedOptionBuilder structure.
     * @param index the type of `index` buffer.
     * @param content the type of IndexedOptionBuilder content.
