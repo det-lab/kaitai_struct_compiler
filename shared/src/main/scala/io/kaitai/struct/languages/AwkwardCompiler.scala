@@ -459,7 +459,6 @@ class AwkwardCompiler(
 
   override def runRead(name: List[String]): Unit = {
     outSrc.puts
-    outSrc.puts(s"${name.last}_builder.set_fields(${name.last}_fields_map);")
     val wrapToTryCatch = (config.cppConfig.pointers == CppRuntimeConfig.RawPointers);
     if (wrapToTryCatch) {
       outSrc.puts
@@ -727,6 +726,7 @@ class AwkwardCompiler(
           s"${if (unionIndex.contains("child")) ".content<" + unionIndex.split("_").last + ">()" else ""}" + 
           s";"
         )
+        outSrc.puts(s"${nameList.last}_builder.set_fields(${nameList.last}_fields_map);")
       case _ =>
     }
     super.attrParse2(id, dataType, io, rep, isRaw, defEndian, assignTypeOpt)
