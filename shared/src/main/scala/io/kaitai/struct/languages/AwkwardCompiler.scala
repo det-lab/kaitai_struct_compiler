@@ -208,6 +208,7 @@ class AwkwardCompiler(
   val instancesMap = MutableMap.empty[String, Set[String]]
 
   var isRepeat = false
+  var isRecord = false
   var isIndexedOption = false
   var nameList = List.empty[String]
   var typeName : String = ""
@@ -717,6 +718,7 @@ class AwkwardCompiler(
   ): Unit = {
     dataType match {
       case ut: UserType =>
+        isRecord = true
         if (checkUnion.getOrElse(nameList.last + "A__Z" + ut.name.head + "__case__" + idToStr(id), "").contains("child_")) {
           outSrc.puts(s"${idToStr(id)}_unionbuilder.append_content<${checkUnion(nameList.last + "A__Z" + ut.name.head + "__case__" + idToStr(id)).split("_").last}>();")
         }
@@ -937,11 +939,13 @@ class AwkwardCompiler(
     outSrc.puts("else {")
     outSrc.inc
     // Appends invalid index to the IndexedOptionBuilder
-    outSrc.puts(s"${currId}_indexedoptionbuilder.content().set_fields(${typeName}_fields_map);")
+    if (isRecord)
+      outSrc.puts(s"${currId}_indexedoptionbuilder.content().set_fields(${typeName}_fields_map);")
     outSrc.puts(s"${currId}_indexedoptionbuilder.append_invalid();")
     outSrc.dec
     outSrc.puts("}") 
     outSrc.puts
+    isRecord = false
   }
 
   override def condRepeatCommonInit(id: Identifier, dataType: DataType, needRaw: NeedRaw): Unit = {
