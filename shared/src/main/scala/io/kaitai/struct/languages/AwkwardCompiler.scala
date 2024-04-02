@@ -1652,9 +1652,9 @@ class AwkwardCompiler(
     outSrc.puts
     outSrc.puts(s"#ifdef USE_${topClassName.toUpperCase()}_")
 
-    outHdr.puts
-    outHdr.puts(s"std::map<std::string, $builderType*> builder_map;")
-    outHdr.puts(s"std::vector<std::string>* builder_keys;")
+    outSrc.puts
+    outSrc.puts(s"std::map<std::string, $builderType*> builder_map;")
+    outSrc.puts(s"std::vector<std::string>* builder_keys;")
     outHdr.puts
     outHdr.puts(s"$builderType* load(std::string file_path);")
     outHdr.puts
