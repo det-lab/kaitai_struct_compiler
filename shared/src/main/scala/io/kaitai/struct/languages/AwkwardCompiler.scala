@@ -309,6 +309,8 @@ class AwkwardCompiler(
     outHdrAwkward.puts("template<class PRIMITIVE>");
     outHdrAwkward.puts("using StringBuilder = awkward::LayoutBuilder::String<PRIMITIVE>;");
     outHdrAwkward.puts("template<class PRIMITIVE, class BUILDER>");
+    outHdrAwkward.puts("using IndexedBuilder = awkward::LayoutBuilder::Indexed<PRIMITIVE, BUILDER>;");
+    outHdrAwkward.puts("template<class PRIMITIVE, class BUILDER>");
     outHdrAwkward.puts("using IndexedOptionBuilder = awkward::LayoutBuilder::IndexedOption<PRIMITIVE, BUILDER>;");
     outHdrAwkward.puts("template<class... BUILDERS>");
     outHdrAwkward.puts("using UnionBuilder = awkward::LayoutBuilder::Union<int8_t, uint32_t, BUILDERS...>;");
@@ -826,7 +828,7 @@ class AwkwardCompiler(
           outSrc.puts(s"auto& ${builderName}_indexbuilder = ${nameList.last}_builder.content<Field_${nameList.last}::${nameList.last + "A__Z" + idToStr(id)}>();")
           outSrc.puts(s"auto& ${builderName}_listoffsetbuilder = ${builderName}_indexbuilder.append_index();")
           outSrc.puts(s"${builderName}_listoffsetbuilder.begin_list();")
-          outSrc.puts(s"auto& ${builderName}_builder = ${builderName}_listoffsetbuilder.content();")
+          outSrc.puts(s"auto& ${builderName}_stringbuilder = ${builderName}_listoffsetbuilder.content();")
           outSrc.puts(s"""${builderName}_indexbuilder.set_parameters("\\"__array__\\": \\"categorical\\"");""")
           outSrc.puts(s"""${builderName}_listoffsetbuilder.set_parameters("\\"__array__\\": \\"string\\"");""")
           outSrc.puts(s"""${builderName}_builder.set_parameters("\\"__array__\\" : \\"char\\"");""")
@@ -1543,7 +1545,7 @@ class AwkwardCompiler(
           case enumType: EnumType =>
             // for enum types, NumpyBuilder of the given type will be generated.
             builder.fields += cs.name.last + "A__Z" + idToStr(el.id)
-            builder.contents += IndexedBuilder(kaitaiType2NativeType(enumType.basedOn), ListOffsetBuilder("int64_t", NumpyBuilder("uint8_t")) )
+            builder.contents += IndexedBuilder(kaitaiType2NativeType(enumType.basedOn), StringBuilder("int64_t") )
           case _ => throw new UnsupportedOperationException(s"Unsupported data type: ${el.dataType}")
         }
       }
@@ -1556,7 +1558,7 @@ class AwkwardCompiler(
         instSpec.dataTypeComposite.asNonOwning() match {
           case et: EnumType =>
             // for enum cases of the instances.
-            builder.contents += IndexedBuilder(kaitaiType2NativeType(et.basedOn), ListOffsetBuilder("int64_t", NumpyBuilder("uint8_t")) )
+            builder.contents += IndexedBuilder(kaitaiType2NativeType(et.basedOn), StringBuilder("int64_t") )
           case _ => builder.contents += NumpyBuilder(kaitaiType2NativeType(instSpec.dataTypeComposite.asNonOwning()))
         }
       }
