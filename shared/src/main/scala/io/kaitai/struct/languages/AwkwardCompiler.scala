@@ -1345,6 +1345,21 @@ class AwkwardCompiler(
 
     outHdr.dec
     outHdr.puts("};")
+
+    outHdr.puts
+    outHdr.puts(s"std::map<int, std::string> ${enumClass}_map {")
+    outHdr.inc
+    if (enumColl.size > 1) {
+      enumColl.dropRight(1).foreach { case (id, label) =>
+        outHdr.puts(s"""{${translator.doIntLiteral(id)}, \"${label.name}\"},""")
+      }
+    }
+    enumColl.last match {
+      case (id, label) =>
+        outHdr.puts(s"""{${translator.doIntLiteral(id)}, \"${label.name}\"},""")
+    }
+    outHdr.dec
+    outHdr.puts("};")
   }
 
   override def classToString(toStringExpr: Ast.expr): Unit = {
