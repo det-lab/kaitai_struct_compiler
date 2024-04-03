@@ -825,19 +825,11 @@ class AwkwardCompiler(
             s");" else ""}"
         case enumType: EnumType =>
           var builderName = idToStr(id)
+          val enumMapClass = builderName+"s_t_map"
           outSrc.puts(s"auto& ${builderName}_indexbuilder = ${nameList.last}_builder.content<Field_${nameList.last}::${nameList.last + "A__Z" + idToStr(id)}>();")
-          outSrc.puts(s"auto& ${builderName}_listoffsetbuilder = ${builderName}_indexbuilder.append_index();")
-          outSrc.puts(s"${builderName}_listoffsetbuilder.begin_list();")
-          outSrc.puts(s"auto& ${builderName}_stringbuilder = ${builderName}_listoffsetbuilder.content();")
+          outSrc.puts(s"auto& ${builderName}_stringbuilder = ${builderName}_indexbuilder.append_index();")
           outSrc.puts(s"""${builderName}_indexbuilder.set_parameters("\\"__array__\\": \\"categorical\\"");""")
-          outSrc.puts(s"""${builderName}_listoffsetbuilder.set_parameters("\\"__array__\\": \\"string\\"");""")
-          outSrc.puts(s"""${builderName}_builder.set_parameters("\\"__array__\\" : \\"char\\"");""")
-          outSrc.puts(s"for (int i = 0; i < ${getRawIdExpr(id, rep)}.length(); i++) {")
-          outSrc.inc
-          outSrc.puts(s"${builderName}_builder.append(${getRawIdExpr(id, rep)}[i]);")
-          outSrc.dec
-          outSrc.puts("}")
-          outSrc.puts(s"${builderName}_listoffsetbuilder.end_list();")
+          outSrc.puts(s"""${builderName}_stringbuilder.append(m__parent->${enumMapClass}[${getRawIdExpr(id, rep)}]);""")
 
         case _ => // do nothing
       }
