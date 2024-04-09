@@ -226,7 +226,7 @@ class AwkwardCompiler(
   val checkUnion = MutableMap.empty[String, String]
   val builderTypeMap = MutableMap.empty[String, String]
   val directedMap = MutableMap.empty[String, Set[String]]
-  val instancesMap = MutableMap.empty[String, Set[String]]
+  val instancesMap = MutableMap.empty[String, Set[InstanceSpec]]
 
   var isRepeat = false
   var isRecord = false
@@ -537,9 +537,27 @@ class AwkwardCompiler(
   }
 
   override def readFooter(): Unit = {
-    instancesMap(nameList.last).foreach { instName =>
-      outSrc.puts(s"auto& ${instName}_instancebuilder = ${nameList.last}_builder.content<Field_${nameList.last}::${nameList.last + "A__Z" + instName}>();")
-      outSrc.puts(s"${instName}_instancebuilder.append($instName());")
+    instancesMap(nameList.last).foreach { instSpec =>
+      val instName = idToStr(instSpec.id)
+      val enumMapClass = instSpec match {
+        case vis: ValueInstanceSpec =>
+          vis.value match {
+            case ebi: Ast.expr.EnumById =>
+              ebi.enumName.name + "_t_map"
+            case _ => ""
+          }
+          case _ => ""       
+        }
+      if (!enumMapClass.isEmpty) {
+        outSrc.puts(s"auto& ${instName}_instancebuilder = ${nameList.last}_builder.content<Field_${nameList.last}::${nameList.last + "A__Z" + instName}>();")
+        outSrc.puts(s"auto& ${instName}_stringbuilder = ${instName}_instancebuilder.append_index();")
+        outSrc.puts(s"""${instName}_instancebuilder.set_parameters("\\"__array__\\": \\"categorical\\"");""")
+        outSrc.puts(s"${instName}_stringbuilder.append(m__root->${enumMapClass}[$instName()]);")
+      }
+      else {
+        outSrc.puts(s"auto& ${instName}_instancebuilder = ${nameList.last}_builder.content<Field_${nameList.last}::${nameList.last + "A__Z" + instName}>();")
+        outSrc.puts(s"${instName}_instancebuilder.append($instName());")
+      }
     }
     outSrc.dec
     outSrc.puts("}")
@@ -825,11 +843,11 @@ class AwkwardCompiler(
             s");" else ""}"
         case enumType: EnumType =>
           var builderName = idToStr(id)
-          val enumMapClass = builderName+"s_t_map"
+          val enumMapClass = enumType.enumSpec.get.name.last + "_t_map"
           outSrc.puts(s"auto& ${builderName}_indexbuilder = ${nameList.last}_builder.content<Field_${nameList.last}::${nameList.last + "A__Z" + idToStr(id)}>();")
           outSrc.puts(s"auto& ${builderName}_stringbuilder = ${builderName}_indexbuilder.append_index();")
           outSrc.puts(s"""${builderName}_indexbuilder.set_parameters("\\"__array__\\": \\"categorical\\"");""")
-          outSrc.puts(s"""${builderName}_stringbuilder.append(m__parent->${enumMapClass}[${getRawIdExpr(id, rep)}]);""")
+          outSrc.puts(s"""${builderName}_stringbuilder.append(m__root->${enumMapClass}[${getRawIdExpr(id, rep)}]);""")
 
         case _ => // do nothing
       }
@@ -1560,7 +1578,7 @@ class AwkwardCompiler(
       instancesMap.getOrElseUpdate(cs.name.last, Set())
       // for adding the builders for the instances.
       cs.instances.foreach { case (instName, instSpec) =>
-        instancesMap(cs.name.last) += idToStr(instName)
+        instancesMap(cs.name.last) += instSpec
         builder.fields += cs.name.last + "A__Z" + idToStr(instName)
         instSpec.dataTypeComposite.asNonOwning() match {
           case et: EnumType =>
