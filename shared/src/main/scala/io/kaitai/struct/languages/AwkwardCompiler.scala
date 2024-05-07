@@ -1351,14 +1351,30 @@ class AwkwardCompiler(
     outHdr.puts(s"enum $enumClass {")
     outHdr.inc
 
-    if (enumColl.size > 1) {
-      enumColl.dropRight(1).foreach { case (id, label) =>
-        outHdr.puts(s"${value2Const(enumName, label.name)} = ${translator.doIntLiteral(id)},")
+    val maxEnum = enumColl.map(_._1).max
+
+    val EmptyStringEnumValueSpec = EnumValueSpec("null", DocSpec(None, List()))
+
+    // loop from 0 to maxEnum
+    // create enumColl2 with all the values from enumColl
+    // but with the missing values filled with EmptyStringEnumValueSpec
+
+    val enumColl2 = (0L to maxEnum).map { i =>
+      enumColl.find(_._1 == i).getOrElse((i, EmptyStringEnumValueSpec))
+    }
+
+    if (enumColl2.size > 1) {
+      enumColl2.dropRight(1).foreach { case (id, label) =>
+        outHdr.puts(
+          s"${value2Const(enumName, label.name)} = ${translator.doIntLiteral(id)},"
+        )
       }
     }
-    enumColl.last match {
+    enumColl2.last match {
       case (id, label) =>
-        outHdr.puts(s"${value2Const(enumName, label.name)} = ${translator.doIntLiteral(id)}")
+        outHdr.puts(
+          s"${value2Const(enumName, label.name)} = ${translator.doIntLiteral(id)}"
+        )
     }
 
     outHdr.dec
@@ -1367,12 +1383,12 @@ class AwkwardCompiler(
     outHdr.puts
     outHdr.puts(s"std::map<int, std::string> ${enumClass}_map {")
     outHdr.inc
-    if (enumColl.size > 1) {
-      enumColl.dropRight(1).foreach { case (id, label) =>
+    if (enumColl2.size > 1) {
+      enumColl2.dropRight(1).foreach { case (id, label) =>
         outHdr.puts(s"""{${translator.doIntLiteral(id)}, \"${label.name}\"},""")
       }
     }
-    enumColl.last match {
+    enumColl2.last match {
       case (id, label) =>
         outHdr.puts(s"""{${translator.doIntLiteral(id)}, \"${label.name}\"},""")
     }
