@@ -845,9 +845,7 @@ class AwkwardCompiler(
           var builderName = idToStr(id)
           val enumMapClass = enumType.enumSpec.get.name.last + "_t_map"
           outSrc.puts(s"auto& ${builderName}_indexbuilder = ${nameList.last}_builder.content<Field_${nameList.last}::${nameList.last + "A__Z" + idToStr(id)}>();")
-          outSrc.puts(s"auto& ${builderName}_stringbuilder = ${builderName}_indexbuilder.append_index();")
-          outSrc.puts(s"""${builderName}_indexbuilder.set_parameters("\\"__array__\\": \\"categorical\\"");""")
-          outSrc.puts(s"""${builderName}_stringbuilder.append(m__root->${enumMapClass}[${getRawIdExpr(id, rep)}]);""")
+          outSrc.puts(s"${builderName}_indexbuilder.append_index(${getRawIdExpr(id, rep)});")
 
         case _ => // do nothing
       }
