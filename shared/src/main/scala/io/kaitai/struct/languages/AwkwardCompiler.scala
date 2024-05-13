@@ -847,6 +847,20 @@ class AwkwardCompiler(
           outSrc.puts(s"auto& ${builderName}_indexbuilder = ${nameList.last}_builder.content<Field_${nameList.last}::${nameList.last + "A__Z" + idToStr(id)}>();")
           outSrc.puts(s"${builderName}_indexbuilder.append_index(${getRawIdExpr(id, rep)});")
 
+          // build the enum "dictionary"
+          outSrc.puts(s"auto& ${builderName}_stringbuilder = ${builderName}_indexbuilder.content();")
+
+          outSrc.puts(s"if (${builderName}_stringbuilder.content().length() == 0) {")
+          outSrc.inc
+          outSrc.puts(s"""${builderName}_indexbuilder.set_parameters("\\"__array__\\": \\"categorical\\"");""")
+          outSrc.puts(s"for (auto& kv: m__root->${enumMapClass} ) {")
+          outSrc.inc
+          outSrc.puts(s"${builderName}_stringbuilder.append(kv.second);")
+          outSrc.dec
+          outSrc.puts("}")
+          outSrc.dec
+          outSrc.puts("}")
+
         case _ => // do nothing
       }
       isIndexedOption = false
