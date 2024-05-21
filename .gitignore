@@ -24,7 +24,7 @@ project/boot/
 /runnable
 js/npm
 
-# vscode files
+# VS code files
 .bloop
 .metals
 .scalafmt.conf

@@ -160,6 +160,27 @@ class AwkwardCompiler(
   }
 
   /**
+    * Generates the IndexedBuilder structure.
+    * @param index the type of `index` buffer.
+    * @param content the type of IndexedBuilder content.
+    */
+  case class IndexedBuilder(
+    index: String,
+    content: LayoutBuilder
+  ) extends LayoutBuilder {
+
+    /**
+      * Prints the structure of IndexedBuilder.
+      * @param indent the number of spaces to indent the structure.
+      * @return strings containing the index type and the content of IndexedBuilder.
+      */
+    override def printBuilderStructure(indent: Int): String = {
+      val indexedContent = content.printBuilderStructure(indent)
+      s"IndexedBuilder<$index, ${indexedContent}>"
+    }
+  }
+
+  /**
     * Generates the IndexedOptionBuilder structure.
     * @param index the type of `index` buffer.
     * @param content the type of IndexedOptionBuilder content.
@@ -205,7 +226,7 @@ class AwkwardCompiler(
   val checkUnion = MutableMap.empty[String, String]
   val builderTypeMap = MutableMap.empty[String, String]
   val directedMap = MutableMap.empty[String, Set[String]]
-  val instancesMap = MutableMap.empty[String, Set[String]]
+  val instancesMap = MutableMap.empty[String, Set[InstanceSpec]]
 
   var isRepeat = false
   var isRecord = false
@@ -287,6 +308,8 @@ class AwkwardCompiler(
     outHdrAwkward.puts("using NumpyBuilder = awkward::LayoutBuilder::Numpy<PRIMITIVE>;");
     outHdrAwkward.puts("template<class PRIMITIVE>");
     outHdrAwkward.puts("using StringBuilder = awkward::LayoutBuilder::String<PRIMITIVE>;");
+    outHdrAwkward.puts("template<class PRIMITIVE, class BUILDER>");
+    outHdrAwkward.puts("using IndexedBuilder = awkward::LayoutBuilder::Indexed<PRIMITIVE, BUILDER>;");
     outHdrAwkward.puts("template<class PRIMITIVE, class BUILDER>");
     outHdrAwkward.puts("using IndexedOptionBuilder = awkward::LayoutBuilder::IndexedOption<PRIMITIVE, BUILDER>;");
     outHdrAwkward.puts("template<class... BUILDERS>");
@@ -514,9 +537,27 @@ class AwkwardCompiler(
   }
 
   override def readFooter(): Unit = {
-    instancesMap(nameList.last).foreach { instName =>
-      outSrc.puts(s"auto& ${instName}_instancebuilder = ${nameList.last}_builder.content<Field_${nameList.last}::${nameList.last + "A__Z" + instName}>();")
-      outSrc.puts(s"${instName}_instancebuilder.append($instName());")
+    instancesMap(nameList.last).foreach { instSpec =>
+      val instName = idToStr(instSpec.id)
+      val enumMapClass = instSpec match {
+        case vis: ValueInstanceSpec =>
+          vis.value match {
+            case ebi: Ast.expr.EnumById =>
+              ebi.enumName.name + "_t_map"
+            case _ => ""
+          }
+          case _ => ""       
+        }
+      if (!enumMapClass.isEmpty) {
+        outSrc.puts(s"auto& ${instName}_instancebuilder = ${nameList.last}_builder.content<Field_${nameList.last}::${nameList.last + "A__Z" + instName}>();")
+        outSrc.puts(s"auto& ${instName}_stringbuilder = ${instName}_instancebuilder.append_index();")
+        outSrc.puts(s"""${instName}_instancebuilder.set_parameters("\\"__array__\\": \\"categorical\\"");""")
+        outSrc.puts(s"${instName}_stringbuilder.append(m__root->${enumMapClass}[$instName()]);")
+      }
+      else {
+        outSrc.puts(s"auto& ${instName}_instancebuilder = ${nameList.last}_builder.content<Field_${nameList.last}::${nameList.last + "A__Z" + instName}>();")
+        outSrc.puts(s"${instName}_instancebuilder.append($instName());")
+      }
     }
     outSrc.dec
     outSrc.puts("}")
@@ -789,9 +830,6 @@ class AwkwardCompiler(
           outSrc.dec
           outSrc.puts("}")
           outSrc.puts(s"${builderName}_listoffsetbuilder.end_list();")
-        case enumType: EnumType =>
-          outSrc.puts(s"auto& ${idToStr(id)}_builder = ${nameList.last}_builder.content<Field_${nameList.last}::${nameList.last + "A__Z" + idToStr(id)}>();")
-          outSrc.puts(s"${idToStr(id)}_builder.append(${getRawIdExpr(id, rep)});")
         case userType: UserType =>
           // Prints the C++ string to append the tags and index in the union builder buffers if a given
           // userType is a child of a UnionBuilder.
@@ -803,6 +841,26 @@ class AwkwardCompiler(
             s"${if (isRepeat) ".content()" else ""}" +
             s"${if (unionIndex.contains("child")) ".content<" + unionIndex.split("_").last + ">()" else ""}" + 
             s");" else ""}"
+        case enumType: EnumType =>
+          var builderName = idToStr(id)
+          val enumMapClass = enumType.enumSpec.get.name.last + "_t_map"
+          outSrc.puts(s"auto& ${builderName}_indexbuilder = ${nameList.last}_builder.content<Field_${nameList.last}::${nameList.last + "A__Z" + idToStr(id)}>();")
+          outSrc.puts(s"${builderName}_indexbuilder.append_index(${getRawIdExpr(id, rep)});")
+
+          // build the enum "dictionary"
+          outSrc.puts(s"auto& ${builderName}_stringbuilder = ${builderName}_indexbuilder.content();")
+
+          outSrc.puts(s"if (${builderName}_stringbuilder.content().length() == 0) {")
+          outSrc.inc
+          outSrc.puts(s"""${builderName}_indexbuilder.set_parameters("\\"__array__\\": \\"categorical\\"");""")
+          outSrc.puts(s"for (auto& kv: m__root->${enumMapClass} ) {")
+          outSrc.inc
+          outSrc.puts(s"${builderName}_stringbuilder.append(kv.second);")
+          outSrc.dec
+          outSrc.puts("}")
+          outSrc.dec
+          outSrc.puts("}")
+
         case _ => // do nothing
       }
       isIndexedOption = false
@@ -1305,16 +1363,47 @@ class AwkwardCompiler(
     outHdr.puts(s"enum $enumClass {")
     outHdr.inc
 
-    if (enumColl.size > 1) {
-      enumColl.dropRight(1).foreach { case (id, label) =>
-        outHdr.puts(s"${value2Const(enumName, label.name)} = ${translator.doIntLiteral(id)},")
-      }
-    }
-    enumColl.last match {
-      case (id, label) =>
-        outHdr.puts(s"${value2Const(enumName, label.name)} = ${translator.doIntLiteral(id)}")
+    val maxEnum = enumColl.map(_._1).max
+
+    val EmptyStringEnumValueSpec = EnumValueSpec("null", DocSpec(None, List()))
+
+    // loop from 0 to maxEnum
+    // create enumColl2 with all the values from enumColl
+    // but with the missing values filled with EmptyStringEnumValueSpec
+
+    val enumColl2 = (0L to maxEnum).map { i =>
+      enumColl.find(_._1 == i).getOrElse((i, EmptyStringEnumValueSpec))
     }
 
+    if (enumColl2.size > 1) {
+      enumColl2.dropRight(1).foreach { case (id, label) =>
+        outHdr.puts(
+          s"${value2Const(enumName, label.name)} = ${translator.doIntLiteral(id)},"
+        )
+      }
+    }
+    enumColl2.last match {
+      case (id, label) =>
+        outHdr.puts(
+          s"${value2Const(enumName, label.name)} = ${translator.doIntLiteral(id)}"
+        )
+    }
+
+    outHdr.dec
+    outHdr.puts("};")
+
+    outHdr.puts
+    outHdr.puts(s"std::map<int, std::string> ${enumClass}_map {")
+    outHdr.inc
+    if (enumColl2.size > 1) {
+      enumColl2.dropRight(1).foreach { case (id, label) =>
+        outHdr.puts(s"""{${translator.doIntLiteral(id)}, \"${label.name}\"},""")
+      }
+    }
+    enumColl2.last match {
+      case (id, label) =>
+        outHdr.puts(s"""{${translator.doIntLiteral(id)}, \"${label.name}\"},""")
+    }
     outHdr.dec
     outHdr.puts("};")
   }
@@ -1509,7 +1598,7 @@ class AwkwardCompiler(
           case enumType: EnumType =>
             // for enum types, NumpyBuilder of the given type will be generated.
             builder.fields += cs.name.last + "A__Z" + idToStr(el.id)
-            builder.contents += NumpyBuilder(kaitaiType2NativeType(enumType.basedOn))
+            builder.contents += IndexedBuilder(kaitaiType2NativeType(enumType.basedOn), StringBuilder("int64_t") )
           case _ => throw new UnsupportedOperationException(s"Unsupported data type: ${el.dataType}")
         }
       }
@@ -1517,12 +1606,12 @@ class AwkwardCompiler(
       instancesMap.getOrElseUpdate(cs.name.last, Set())
       // for adding the builders for the instances.
       cs.instances.foreach { case (instName, instSpec) =>
-        instancesMap(cs.name.last) += idToStr(instName)
+        instancesMap(cs.name.last) += instSpec
         builder.fields += cs.name.last + "A__Z" + idToStr(instName)
         instSpec.dataTypeComposite.asNonOwning() match {
           case et: EnumType =>
             // for enum cases of the instances.
-            builder.contents += NumpyBuilder(kaitaiType2NativeType(et.basedOn))
+            builder.contents += IndexedBuilder(kaitaiType2NativeType(et.basedOn), StringBuilder("int64_t") )
           case _ => builder.contents += NumpyBuilder(kaitaiType2NativeType(instSpec.dataTypeComposite.asNonOwning()))
         }
       }
@@ -1616,9 +1705,9 @@ class AwkwardCompiler(
     outSrc.puts
     outSrc.puts(s"#ifdef USE_${topClassName.toUpperCase()}_")
 
-    outHdr.puts
-    outHdr.puts(s"std::map<std::string, $builderType*> builder_map;")
-    outHdr.puts(s"std::vector<std::string>* builder_keys;")
+    outSrc.puts
+    outSrc.puts(s"std::map<std::string, $builderType*> builder_map;")
+    outSrc.puts(s"std::vector<std::string>* builder_keys;")
     outHdr.puts
     outHdr.puts(s"$builderType* load(std::string file_path);")
     outHdr.puts
