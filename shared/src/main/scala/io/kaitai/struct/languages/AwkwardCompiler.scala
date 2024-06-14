@@ -409,8 +409,9 @@ class AwkwardCompiler(
     importDataType(parentType)
 
     outHdr.puts
-    outHdr.puts(s"$classNameBrief($paramsArg" +
+    outHdr.puts(s"$classNameBrief(" +
       s"${if (name.size > 1) name.last.capitalize + "BuilderType builder, " else ""}" +
+      s"$paramsArg" +
       s"$tIo $pIo, " +
       s"$tParent $pParent = $nullPtr, " +
       s"$tRoot $pRoot = $nullPtr$endianSuffixHdr);"
@@ -418,8 +419,9 @@ class AwkwardCompiler(
 
     outSrc.puts
     // Adds the constructor initiliazation for each RecordBuilder type.
-    outSrc.puts(s"${types2class(name)}::$classNameBrief($paramsArg" +
+    outSrc.puts(s"${types2class(name)}::$classNameBrief(" +
       s"${if (name.size > 1) name.last.capitalize + "BuilderType builder, " else ""}" +
+      s"$paramsArg" +
       s"$tIo $pIo, " +
       s"$tParent $pParent, " +
       s"$tRoot $pRoot$endianSuffixSrc) : $kstructName($pIo)" + 
