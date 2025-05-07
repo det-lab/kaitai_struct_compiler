@@ -33,3 +33,5 @@ jvm/test_artifacts/
 project/.bloop/
 project/metals.sbt
 test_artifacts/
+.bsp
+project/project
