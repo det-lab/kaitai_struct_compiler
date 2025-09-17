@@ -28,7 +28,6 @@ js/npm
 .bloop
 .metals
 .scalafmt.conf
-.vscode/
 jvm/test_artifacts/
 project/.bloop/
 project/metals.sbt
