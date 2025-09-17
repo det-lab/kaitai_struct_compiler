@@ -1,0 +1,55 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        
+
+// java -cp kaitai_struct_compiler/jvm/target/scala-2.12/kaitai-struct-compiler_2.12-0.11-SNAPSHOT.jar:/usr/share/kaitai-struct-compiler/lib/* io.kaitai.struct.JavaMain -t awkward --outdir test_artifacts example_data/schemas/soudan.ksy
+        {
+            "type": "scala",
+            "request": "launch",
+            "name": "Run Scala compiler",
+            "mainClass": "io.kaitai.struct.JavaMain",
+            "args": [
+                "-t",
+                "awkward",
+                "--outdir",
+                "../../test_artifacts",
+                "/home/ubuntu/s/kaitai/kaitai_struct_awkward_runtime/example_data/schemas/soudan.ksy"
+            ],
+            "jvmOptions": [],
+            "env": {}
+        },
+        {
+            "name": "Python: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "python": "/home/ubuntu/.virtualenvs/kaitai/bin/python",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            // specify working folder
+            "cwd": "/home/ubuntu/kaitai/kaitai_struct_awkward_runtime"
+        },
+        {
+            "name": "(gdb) Attach",
+            "type": "cppdbg",
+            "request": "attach",
+            "program": "/home/ubuntu/.virtualenvs/kaitai/bin/python",
+            "processId": "${command:pickProcess}",
+            "MIMode": "gdb",
+            "sourceFileMap": {
+                "/home/ubuntu/kaitai/kaitai_struct_awkward_runtime/build/build/": "/home/ubuntu/kaitai/kaitai_struct_awkward_runtime/test_artifacts/"
+            },
+            "additionalSOLibSearchPath":"/home/ubuntu/kaitai/kaitai_struct_awkward_runtime/test_artifacts/",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        }
+    ]
+}
