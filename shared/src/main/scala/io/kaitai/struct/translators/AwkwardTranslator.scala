@@ -123,6 +123,13 @@ class AwkwardTranslator(provider: TypeProvider, importListSrc: CppImportList, im
     (detectType(left), detectType(right), op) match {
       case (_: IntType, _: IntType, Ast.operator.Mod) =>
         s"${AwkwardCompiler.kstreamName}::mod(${translate(left)}, ${translate(right)})"
+      case (_: IntType, _: IntType, Ast.operator.LShift) =>
+        right match {
+          case Ast.expr.IntNum(n) if n >= 32 =>
+            s"(static_cast<uint64_t>(${translate(left)}) << ${translate(right)})"
+          case _ =>
+            super.numericBinOp(left, op, right)
+        }
       case _ =>
         super.numericBinOp(left, op, right)
     }

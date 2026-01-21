@@ -1947,7 +1947,7 @@ object AwkwardCompiler extends LanguageCompilerStatic
       case BitsType(_, _) => "uint64_t"
 
       case _: BooleanType => "bool"
-      case CalcIntType => "int32_t"
+      case CalcIntType => "int64_t"
       case CalcFloatType => "double"
 
       case _: StrType => "std::string"
