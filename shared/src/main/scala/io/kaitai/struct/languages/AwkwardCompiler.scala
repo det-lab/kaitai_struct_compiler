@@ -228,7 +228,7 @@ class AwkwardCompiler(
   val directedMap = MutableMap.empty[String, Set[String]]
   val instancesMap = MutableMap.empty[String, Set[InstanceSpec]]
 
-  var isRepeat = false
+  var isAttrRepeat = false
   var isRecord = false
   var isIndexedOption = false
   var nameList = List.empty[String]
@@ -759,6 +759,8 @@ class AwkwardCompiler(
     defEndian: Option[FixedEndian],
     assignTypeOpt: Option[DataType] = None
   ): Unit = {
+    val prevAttrRepeat = isAttrRepeat
+    isAttrRepeat = rep != NoRepeat
     dataType match {
       case ut: UserType =>
         isRecord = true
@@ -769,7 +771,7 @@ class AwkwardCompiler(
         outSrc.puts(
           s"auto& ${ut.name.head}_recordbuilder = ${nameList.last}_builder.content<Field_${nameList.last}::${nameList.last + "A__Z" + idToStr(id)}>()" +
           s"${if (isIndexedOption) ".content()" else ""}" +
-          s"${if (isRepeat) ".content()" else ""}" +
+          s"${if (isAttrRepeat) ".content()" else ""}" +
           s"${if (unionIndex.contains("child")) ".content<" + unionIndex.split("_").last + ">()" else ""}" + 
           s";"
         )
@@ -840,7 +842,7 @@ class AwkwardCompiler(
             s"${if (true) "using " + userType.name.head.capitalize + "BuilderType = decltype(std::declval<" + nameList.last.capitalize + 
             s"BuilderType>().content<Field_${nameList.last}::${nameList.last}A__Z${idToStr(id)}>()" +
             s"${if (isIndexedOption) ".content()" else ""}" +
-            s"${if (isRepeat) ".content()" else ""}" +
+            s"${if (isAttrRepeat) ".content()" else ""}" +
             s"${if (unionIndex.contains("child")) ".content<" + unionIndex.split("_").last + ">()" else ""}" + 
             s");" else ""}"
         case enumType: EnumType =>
@@ -867,6 +869,7 @@ class AwkwardCompiler(
       }
       isIndexedOption = false
     }
+    isAttrRepeat = prevAttrRepeat
   }
 
   override def attrProcess(proc: ProcessExpr, varSrc: Identifier, varDest: Identifier, rep: RepeatSpec): Unit = {
@@ -1027,7 +1030,6 @@ class AwkwardCompiler(
     outSrc.puts("{")
     outSrc.inc
     outSrc.puts("int i = 0;")
-    isRepeat =  true
     currId = idToStr(id)
     // Initialize the ListOffsetBuilder for RepeatEos case and call `begin_list`
     outSrc.puts(
@@ -1050,7 +1052,6 @@ class AwkwardCompiler(
     outSrc.puts("}")
     // Calls `end_list` on the ListOffsetBuilder for RepeatEos case
     outSrc.puts(s"${currId}_listoffsetbuilder.end_list();")
-    isRepeat = false
     outSrc.dec
     outSrc.puts("}")
   }
@@ -1058,7 +1059,6 @@ class AwkwardCompiler(
   override def condRepeatExprHeader(id: Identifier, io: String, dataType: DataType, repeatExpr: Ast.expr): Unit = {
     val lenVar = s"l_${idToStr(id)}"
     outSrc.puts(s"const int $lenVar = ${expression(repeatExpr)};")
-    isRepeat =  true
     currId = idToStr(id)
     // Initialize the ListOffsetBuilder for RepeatExpr case and call `begin_list`
     outSrc.puts(
@@ -1079,7 +1079,6 @@ class AwkwardCompiler(
     outSrc.puts("}")
     // Calls `end_list` on the ListOffsetBuilder for RepeatExpr case
     outSrc.puts(s"${currId}_listoffsetbuilder.end_list();")
-    isRepeat = false
   }
 
   override def condRepeatUntilHeader(id: Identifier, io: String, dataType: DataType, untilExpr: expr): Unit = {
@@ -1087,7 +1086,6 @@ class AwkwardCompiler(
     outSrc.inc
     outSrc.puts("int i = 0;")
     outSrc.puts(s"${kaitaiType2NativeType(dataType.asNonOwning())} ${translator.doName("_")};")
-    isRepeat =  true
     currId = idToStr(id)
     // Initialize the ListOffsetBuilder for RepeatUntil case and call `begin_list`
     outSrc.puts(
@@ -1132,7 +1130,6 @@ class AwkwardCompiler(
     outSrc.puts(s"} while (!(${expression(untilExpr)}));")
     // Calls `end_list` on the ListOffsetBuilder for RepeatUntil case
     outSrc.puts(s"${currId}_listoffsetbuilder.end_list();")
-    isRepeat = false
     outSrc.dec
     outSrc.puts("}")
   }
@@ -1245,7 +1242,7 @@ class AwkwardCompiler(
     // Initialize the UnionBuilder
     outSrc.puts(
       s"auto& ${idToStr(id)}_unionbuilder = " +
-      s"${if (isRepeat) idToStr(id) + "_listoffsetbuilder.content();"
+      s"${if (isAttrRepeat) idToStr(id) + "_listoffsetbuilder.content();"
       else nameList.last + "_builder.content<Field_" + nameList.last + "::" + nameList.last + "A__Z" + idToStr(id) + ">();"}"
     )
     outSrc.puts(s"switch (${expression(on)}) {")
