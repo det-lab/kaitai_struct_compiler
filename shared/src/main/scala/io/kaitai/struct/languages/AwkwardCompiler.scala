@@ -228,7 +228,7 @@ class AwkwardCompiler(
   val instancesMap = MutableMap.empty[String, Set[InstanceSpec]]
 
   var isAttrRepeat = false
-  var isRecord = false
+  var ifAttrIsRecord = false
   var isIndexedOption = false
   var nameList = List.empty[String]
   var typeName : String = ""
@@ -801,10 +801,16 @@ class AwkwardCompiler(
     assignTypeOpt: Option[DataType] = None
   ): Unit = {
     val prevAttrRepeat = isAttrRepeat
+    val attrHasIf = isIndexedOption
+    val attrIndexedOption = isIndexedOption
     isAttrRepeat = rep != NoRepeat
+    ifAttrIsRecord = dataType match {
+      case _: UserType => true
+      case _ => false
+    }
+    isIndexedOption = attrIndexedOption
     dataType match {
       case ut: UserType =>
-        isRecord = true
         if (checkUnion.getOrElse(nameList.last + "A__Z" + ut.name.head + "__case__" + idToStr(id), "").contains("child_")) {
           outSrc.puts(s"${idToStr(id)}_unionbuilder.append_content<${checkUnion(nameList.last + "A__Z" + ut.name.head + "__case__" + idToStr(id)).split("_").last}>();")
         }
@@ -830,16 +836,24 @@ class AwkwardCompiler(
         case Int1Type(_) | IntMultiType(_, _, _) | FloatMultiType(_, _) | BitsType(_, _) |
           _: BooleanType | CalcIntType | CalcFloatType  =>
           // Prints the C++ strings for appending the primitive data type to the Layoutbuilder.
-          if (rep == NoRepeat)
-            outSrc.puts(s"auto& ${idToStr(id)}_builder = ${nameList.last}_builder.content<Field_${nameList.last}::${nameList.last + "A__Z" + idToStr(id)}>();")
+          if (rep == NoRepeat) {
+            if (isIndexedOption)
+              outSrc.puts(s"auto& ${idToStr(id)}_builder = ${idToStr(id)}_indexedoptionbuilder.content();")
+            else
+              outSrc.puts(s"auto& ${idToStr(id)}_builder = ${nameList.last}_builder.content<Field_${nameList.last}::${nameList.last + "A__Z" + idToStr(id)}>();")
+          }
           else
             outSrc.puts(s"auto& ${idToStr(id)}_builder = ${idToStr(id)}_listoffsetbuilder.content();")
           outSrc.puts(s"${idToStr(id)}_builder.append(${getRawIdExpr(id, rep)});")
         case _: StrType =>
           // Prints the C++ strings for appending the string data type to the Layoutbuilder.
           var builderName = idToStr(id)
-          if (rep == NoRepeat)
-            outSrc.puts(s"auto& ${builderName}_stringbuilder = ${nameList.last}_builder.content<Field_${nameList.last}::${nameList.last + "A__Z" + idToStr(id)}>();")
+          if (rep == NoRepeat) {
+            if (isIndexedOption)
+              outSrc.puts(s"auto& ${builderName}_stringbuilder = ${idToStr(id)}_indexedoptionbuilder.content();")
+            else
+              outSrc.puts(s"auto& ${builderName}_stringbuilder = ${nameList.last}_builder.content<Field_${nameList.last}::${nameList.last + "A__Z" + idToStr(id)}>();")
+          }
           else {
             throw new NotImplementedError("StrType with repeat is not supported yet")
             // builderName = "sub_" + builderName
@@ -889,7 +903,10 @@ class AwkwardCompiler(
         case enumType: EnumType =>
           var builderName = idToStr(id)
           val enumMapClass = enumType.enumSpec.get.name.last + "_t_map"
-          outSrc.puts(s"auto& ${builderName}_indexbuilder = ${nameList.last}_builder.content<Field_${nameList.last}::${nameList.last + "A__Z" + idToStr(id)}>();")
+          if (isIndexedOption)
+            outSrc.puts(s"auto& ${builderName}_indexbuilder = ${builderName}_indexedoptionbuilder.content();")
+          else
+            outSrc.puts(s"auto& ${builderName}_indexbuilder = ${nameList.last}_builder.content<Field_${nameList.last}::${nameList.last + "A__Z" + idToStr(id)}>();")
           outSrc.puts(s"${builderName}_indexbuilder.append_index(${getRawIdExpr(id, rep)});")
 
           // build the enum "dictionary"
@@ -911,6 +928,41 @@ class AwkwardCompiler(
       isIndexedOption = false
     }
     isAttrRepeat = prevAttrRepeat
+    isIndexedOption = false
+    if (!attrHasIf)
+      ifAttrIsRecord = false
+  }
+
+  override def attrSwitchTypeParse(
+    id: Identifier,
+    on: Ast.expr,
+    cases: Map[Ast.expr, DataType],
+    io: String,
+    rep: RepeatSpec,
+    defEndian: Option[FixedEndian],
+    isNullable: Boolean,
+    assignType: DataType
+  ): Unit = {
+    if (isNullable)
+      outSrc.puts(s"${nullFlagForName(id)} = true;")
+
+    switchCases[DataType](id, on, cases,
+      (dataType) => {
+        if (isNullable)
+          outSrc.puts(s"${nullFlagForName(id)} = false;")
+        attrParse2(id, dataType, io, rep, false, defEndian, Some(assignType))
+      },
+      (dataType) => if (switchBytesOnlyAsRaw) {
+        dataType match {
+          case t: BytesType =>
+            attrParse2(RawIdentifier(id), dataType, io, rep, false, defEndian, Some(assignType))
+          case _ =>
+            attrParse2(id, dataType, io, rep, false, defEndian, Some(assignType))
+        }
+      } else {
+        attrParse2(id, dataType, io, rep, false, defEndian, Some(assignType))
+      }
+    )
   }
 
   override def attrProcess(proc: ProcessExpr, varSrc: Identifier, varDest: Identifier, rep: RepeatSpec): Unit = {
@@ -1043,13 +1095,13 @@ class AwkwardCompiler(
     outSrc.puts("else {")
     outSrc.inc
     // Appends invalid index to the IndexedOptionBuilder
-    if (isRecord)
+    if (ifAttrIsRecord)
       outSrc.puts(s"${currId}_indexedoptionbuilder.content().set_fields(${typeName}_fields_map);")
     outSrc.puts(s"${currId}_indexedoptionbuilder.append_invalid();")
     outSrc.dec
     outSrc.puts("}") 
     outSrc.puts
-    isRecord = false
+    ifAttrIsRecord = false
   }
 
   override def condRepeatInitAttr(id: Identifier, dataType: DataType): Unit = {
@@ -1591,16 +1643,13 @@ class AwkwardCompiler(
             var builderContent = checkRepeat(el.cond.repeat, UnionBuilder(ListBuffer()))
             builder.contents += checkOption(el,builderContent)
             checkUnion(cs.name.last + "A__Z" + idToStr(el.id)) = "parent"
-            val unionBuilder = builder.contents.last match {
-              case lb: AwkwardCompiler.this.ListOffsetBuilder => lb.content.asInstanceOf[UnionBuilder]
-              case ub: AwkwardCompiler.this.UnionBuilder => ub.asInstanceOf[UnionBuilder]
-            }
+            val unionBuilder = unwrapUnionBuilder(builder.contents.last)
             switchType.cases.values.zipWithIndex.foreach { case (dataType, index) =>
               dataType match {
                 case ut: UserType =>
                   checkUnion(cs.name.last + "A__Z" + ut.name.head + "__case__" + idToStr(el.id)) = "child_" + index
                   var builderContent = checkRepeat(NoRepeat, RecordBuilder(ListBuffer(), ListBuffer(), ut.name.head))
-                  unionBuilder.contents += checkOption(el, builderContent)
+                  unionBuilder.contents += builderContent
 
                   unionBuilder.contents.last match {
                     case recordBuilder: AwkwardCompiler.this.RecordBuilder =>
@@ -1616,9 +1665,9 @@ class AwkwardCompiler(
                     case indexedOptionBuilder: AwkwardCompiler.this.IndexedOptionBuilder =>
                       createBuilderStructure(indexedOptionBuilder.content.asInstanceOf[RecordBuilder], ut.name.head)
                     case unsupportedBuilder => throw new UnsupportedOperationException(s"Unsupported builder: $unsupportedBuilder")
-                  }
-                case _ =>
-              }
+            }
+          case _ =>
+      }
             }
           case Int1Type(_) | IntMultiType(_, _, _) | FloatMultiType(_, _) | BitsType(_, _) |
            _: BooleanType | CalcIntType | CalcFloatType  =>
@@ -1686,6 +1735,13 @@ class AwkwardCompiler(
     else {
       builderContent
     }
+  }
+
+  def unwrapUnionBuilder(builder: LayoutBuilder): UnionBuilder = builder match {
+    case ub: UnionBuilder => ub
+    case lb: ListOffsetBuilder => unwrapUnionBuilder(lb.content)
+    case ib: IndexedOptionBuilder => unwrapUnionBuilder(ib.content)
+    case unsupportedBuilder => throw new UnsupportedOperationException(s"Unsupported builder: $unsupportedBuilder")
   }
 
   /**
