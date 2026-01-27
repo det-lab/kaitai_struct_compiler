@@ -470,7 +470,7 @@ class TranslatorSpec extends AnyFunSpec {
         CppCompiler -> "a()->at(42)",
         CSharpCompiler -> "A[42]",
         GoCompiler -> "this.A[42]",
-        JavaCompiler -> "a().get(([(int) 42)])",
+        JavaCompiler -> "a().get(((int) 42))",
         JavaScriptCompiler -> "this.a[42]",
         LuaCompiler -> "self.a[42 + 1]", // TODO: self.a[43]
         PerlCompiler -> "@{$self->a()}[42]",
@@ -690,7 +690,7 @@ class TranslatorSpec extends AnyFunSpec {
         JavaCompiler -> "Long.parseLong(\"12345\", 10)",
         JavaScriptCompiler -> "Number.parseInt(\"12345\", 10)",
         LuaCompiler -> "tonumber(\"12345\")",
-        PerlCompiler -> "[(\"12345\" + 0)]",
+        PerlCompiler -> "(\"12345\" + 0)",
         PHPCompiler -> "intval(\"12345\", 10)",
         PythonCompiler -> "int(u\"12345\")",
         RubyCompiler -> "\"12345\".to_i"
@@ -825,12 +825,12 @@ class TranslatorSpec extends AnyFunSpec {
       CSharpCompiler -> "((short) (1 + 2))",
       GoCompiler -> "int16(1 + 2)",
       JavaCompiler -> "((Number) (1 + 2)).shortValue()",
-      JavaScriptCompiler -> "[(1 + 2)]",
-      LuaCompiler -> "[(1 + 2)]",
-      PerlCompiler -> "[(1 + 2)]",
-      PHPCompiler -> "[(1 + 2)]",
-      PythonCompiler -> "[(1 + 2)]",
-      RubyCompiler -> "[(1 + 2)]"
+      JavaScriptCompiler -> "(1 + 2)",
+      LuaCompiler -> "(1 + 2)",
+      PerlCompiler -> "(1 + 2)",
+      PHPCompiler -> "(1 + 2)",
+      PythonCompiler -> "(1 + 2)",
+      RubyCompiler -> "(1 + 2)"
     ))
     }
 

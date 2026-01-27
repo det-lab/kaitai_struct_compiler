@@ -108,7 +108,13 @@ class TypeValidator(specs: ClassSpecs) extends PrecompileStep {
       detector.validate(vis.value)
       None
     } catch {
+      case err: InvalidIdentifier =>
+        Some(ErrorInInput(err, vis.path ++ List("value")))
+      case err: InternalCompilerError =>
+        throw err
       case err: ExpressionError =>
+        Some(ErrorInInput(err, vis.path ++ List("value")))
+      case err: RuntimeException =>
         Some(ErrorInInput(err, vis.path ++ List("value")))
     }
   }
@@ -151,9 +157,25 @@ class TypeValidator(specs: ClassSpecs) extends PrecompileStep {
   }
 
   def validateSwitchType(st: SwitchType, path: List[String]): Iterable[CompilationProblem] = {
-    val onType = detector.detectType(st.on)
+    val (onTypeOpt, problemsOn) = try {
+      val onType = detector.detectType(st.on)
+      detector.validate(st.on)
+      (Some(onType), None)
+    } catch {
+      case err: InvalidIdentifier =>
+        (None, Some(ErrorInInput(err, path ++ List("type", "switch-on"))))
+      case err: InternalCompilerError =>
+        throw err
+      case err: ExpressionError =>
+        (None, Some(ErrorInInput(err, path ++ List("type", "switch-on"))))
+      case err: RuntimeException =>
+        (None, Some(ErrorInInput(err, path ++ List("type", "switch-on"))))
+    }
+    if (problemsOn.nonEmpty) {
+      return problemsOn
+    }
+    val onType = onTypeOpt.get
 
-    detector.validate(st.on)
     st.cases.flatMap { case (caseExpr, caseType) =>
       val casePath = path ++ List("type", "cases", caseExpr.toString)
       val problems1 = if (caseExpr != SwitchType.ELSE_CONST) {
@@ -192,14 +214,25 @@ class TypeValidator(specs: ClassSpecs) extends PrecompileStep {
     args.indices.flatMap { (i) =>
       val arg = args(i)
       val param = params(i)
-      val tArg = detector.detectType(arg)
-      detector.validate(arg)
-      val tParam = param.dataType
+      try {
+        val tArg = detector.detectType(arg)
+        detector.validate(arg)
+        val tParam = param.dataType
 
-      if (!TypeDetector.canAssign(tArg, tParam)) {
-        Some(ParamMismatchError(i, tArg, param.id.humanReadable, tParam, path))
-      } else {
-        None
+        if (!TypeDetector.canAssign(tArg, tParam)) {
+          Some(ParamMismatchError(i, tArg, param.id.humanReadable, tParam, path))
+        } else {
+          None
+        }
+      } catch {
+        case err: InvalidIdentifier =>
+          Some(ErrorInInput(err, path))
+        case err: InternalCompilerError =>
+          throw err
+        case err: ExpressionError =>
+          Some(ErrorInInput(err, path))
+        case err: RuntimeException =>
+          Some(ErrorInInput(err, path))
       }
     }
   }
@@ -241,7 +274,11 @@ class TypeValidator(specs: ClassSpecs) extends PrecompileStep {
     } catch {
       case err: InvalidIdentifier =>
         Some(ErrorInInput(err, path ++ List(pathKey)))
+      case err: InternalCompilerError =>
+        throw err
       case err: ExpressionError =>
+        Some(ErrorInInput(err, path ++ List(pathKey)))
+      case err: RuntimeException =>
         Some(ErrorInInput(err, path ++ List(pathKey)))
     }
   }
